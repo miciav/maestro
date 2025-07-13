@@ -38,6 +38,8 @@ jobs:
     needs: test # This job depends on the 'test' job passing
     if: startsWith(github.ref, 'refs/tags/v') # Only run if the push is a tag starting with 'v'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Grant write permissions for creating releases
 
     steps:
     - name: Checkout code
