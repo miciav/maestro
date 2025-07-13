@@ -1,5 +1,6 @@
 import yaml
 from typing import Dict, Any
+from rich import get_console
 
 from maestro.core.dag import DAG
 from maestro.core.task import Task, TaskStatus
@@ -37,29 +38,45 @@ class Orchestrator:
         dag.validate()
         return dag
 
-    def run_dag(self, dag: DAG):
+    def run_dag(self, dag: DAG, status_manager=None, progress_tracker=None, status_callback=None):
         execution_order = dag.get_execution_order()
+        console = get_console()
 
         for task_id in execution_order:
             task = dag.tasks[task_id]
+            if status_manager:
+                status_manager.set_task_status(task.task_id, "running")
+            if status_callback:
+                status_callback()
             try:
                 task.status = TaskStatus.RUNNING
-                print(f"Executing task: {task.task_id}")
+                console.print(f"Executing task: {task.task_id}")
                 task.execute()
                 task.status = TaskStatus.COMPLETED
-                print(f"Task {task.task_id} completed.")
+                if status_manager:
+                    status_manager.set_task_status(task.task_id, "completed")
+                if progress_tracker:
+                    progress_tracker.increment_completed()
+                if status_callback:
+                    status_callback()
+                console.print(f"Task {task.task_id} completed.")
             except Exception as e:
                 task.status = TaskStatus.FAILED
-                print(f"Task {task.task_id} failed: {e}")
+                if status_manager:
+                    status_manager.set_task_status(task.task_id, "failed")
+                if status_callback:
+                    status_callback()
+                console.print(f"Task {task.task_id} failed: {e}")
                 break  # Stop execution on failure
 
     def visualize_dag(self, dag: DAG):
         # Basic ASCII visualization
-        print("DAG Visualization:")
+        console = get_console()
+        console.print("DAG Visualization:")
         for task_id, task in dag.tasks.items():
-            print(f"- Task: {task_id} ({task.status.value})")
+            console.print(f"- Task: {task_id} ({task.status.value})")
             if task.dependencies:
-                print(f"  Dependencies: {', '.join(task.dependencies)}")
+                console.print(f"  Dependencies: {', '.join(task.dependencies)}")
 
     def get_dag_status(self, dag: DAG) -> Dict[str, Any]:
         return {

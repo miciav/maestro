@@ -1,6 +1,6 @@
-
 import os
 from typing import Literal
+from rich import get_console
 
 from maestro.tasks.base import BaseTask
 
@@ -16,4 +16,4 @@ class FileWriterTask(BaseTask):
         write_mode = 'a' if self.mode == "append" else 'w'
         with open(self.filepath, write_mode) as f:
             f.write(self.content)
-        print(f"[FileWriterTask] Wrote to {self.filepath}")
+        get_console().print(f"[FileWriterTask] Wrote to {self.filepath}")

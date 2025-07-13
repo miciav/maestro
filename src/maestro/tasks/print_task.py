@@ -1,6 +1,6 @@
-
 import time
 from typing import Optional
+from rich import get_console
 
 from maestro.tasks.base import BaseTask
 
@@ -9,6 +9,6 @@ class PrintTask(BaseTask):
     delay: Optional[int] = 0
 
     def execute(self):
-        print(f"[PrintTask] {self.message}")
+        get_console().print(f"[PrintTask] {self.message}")
         if self.delay:
             time.sleep(self.delay)

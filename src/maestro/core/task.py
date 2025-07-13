@@ -3,6 +3,7 @@ from enum import Enum
 from typing import List, Optional, Callable
 
 from pydantic import BaseModel, Field
+from rich.console import Console
 
 
 class TaskStatus(str, Enum):
@@ -27,7 +28,7 @@ class Task(BaseModel, ABC):
         arbitrary_types_allowed = True
 
     @abstractmethod
-    def execute(self, *args, **kwargs):
+    def execute(self):
         """The main execution logic for the task."""
         pass
 
