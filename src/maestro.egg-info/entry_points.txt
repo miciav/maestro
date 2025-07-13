@@ -1,2 +1,0 @@
-[console_scripts]
-maestro = maestro.cli:app
