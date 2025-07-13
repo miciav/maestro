@@ -1,0 +1,21 @@
+[project]
+name = "maestro"
+version = "0.1.0"
+description = "A simple Python task orchestrator"
+authors = [{name = "Gemini", email = "gemini@google.com"}]
+dependencies = [
+    "pydantic",
+    "typer",
+    "rich",
+    "pyyaml",
+    "pytest>=8.4.1",
+]
+
+[project.scripts]
+maestro = "maestro.cli:app"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "mypy"
+]

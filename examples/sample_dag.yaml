@@ -1,0 +1,28 @@
+dag:
+  name: "esempio_dag"
+  tasks:
+    - task_id: "task_1"
+      type: "PrintTask"
+      params:
+        message: "Inizio pipeline"
+        delay: 2
+      dependencies: []
+    
+    - task_id: "wait_task"
+      type: "WaitTask"
+      params:
+        delay: 5
+      dependencies: ["task_1"]
+
+    - task_id: "task_2"
+      type: "FileWriterTask"
+      params:
+        filepath: "output.txt"
+        content: "Risultato elaborazione"
+      dependencies: ["wait_task"]
+    
+    - task_id: "task_3"
+      type: "PrintTask"
+      params:
+        message: "Fine pipeline"
+      dependencies: ["task_2"]
