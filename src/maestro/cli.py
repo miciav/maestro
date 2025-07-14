@@ -7,17 +7,20 @@ import threading
 from rich.console import Console
 import functools
 
+from maestro.core.dag import DAG
 from maestro.core.orchestrator import Orchestrator
 from maestro.cli_modern import StatusManager, ProgressTracker, DisplayManager
 
 app = typer.Typer()
 
 @app.command()
-def run(dag_file: str, modern_ui: bool = typer.Option(False, "--modern-ui", help="Enable modern UI for DAG execution.")):
+def run(dag_file: str, 
+        modern_ui: bool = typer.Option(False, "--modern-ui", 
+                                       help="Enable modern UI for DAG execution.")):
     """Run a DAG from a YAML file."""
-    orchestrator = Orchestrator()
+    orchestrator = Orchestrator() # Initialize orchestrator with global console
     try:
-        dag = orchestrator.load_dag_from_file(dag_file)
+        dag: DAG = orchestrator.load_dag_from_file(dag_file)
         if modern_ui:
             import networkx as nx
             nx_dag = nx.DiGraph()
@@ -55,8 +58,8 @@ def run(dag_file: str, modern_ui: bool = typer.Option(False, "--modern-ui", help
 
             print("[bold green]DAG execution finished.[/bold green]")
         else:
-            orchestrator.run_dag(dag)
-            print("[bold green]DAG execution finished.[/bold green]")
+            orchestrator.run_dag(dag) # Run without modern UI
+            print("[bold green]DAG execution finished.[/bold green]") # Standard console output
     except Exception as e:
         print(f"[bold red]Error: {e}[/bold red]")
 

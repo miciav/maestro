@@ -1,5 +1,7 @@
 import yaml
 from typing import Dict, Any
+from pathlib import Path
+
 from rich import get_console
 
 from maestro.core.dag import DAG
@@ -8,6 +10,7 @@ from maestro.tasks.base import BaseTask
 from maestro.tasks.print_task import PrintTask
 from maestro.tasks.file_writer_task import FileWriterTask
 from maestro.tasks.wait_task import WaitTask
+from maestro.tasks import TerraformTask
 
 
 class Orchestrator:
@@ -16,21 +19,28 @@ class Orchestrator:
             "PrintTask": PrintTask,
             "FileWriterTask": FileWriterTask,
             "WaitTask": WaitTask,
+            "TerraformTask": TerraformTask,
         }
 
     def load_dag_from_file(self, filepath: str) -> DAG:
+        # Convert to absolute path for consistency
+        filepath = str(Path(filepath).resolve())
+
         with open(filepath, "r") as f:
             config = yaml.safe_load(f)
 
         dag = DAG()
         for task_config in config["dag"]["tasks"]:
-            task_type_name = task_config.pop("type")
-            task_type = self.task_types.get(task_type_name)
+            task_type_name: str = task_config.pop("type")
+            task_type: type[BaseTask] | None = self.task_types.get(task_type_name)
             if not task_type:
                 raise ValueError(f"Unknown task type: {task_type_name}")
 
             params = task_config.pop("params", {})
-            task_config.update(params) # Merge params into the main task_config
+            task_config.update(params)  # Merge params into the main task_config
+
+            # Add the DAG file path to the task configuration
+            task_config["dag_file_path"] = filepath
 
             task = task_type(**task_config)
             dag.add_task(task)
@@ -80,5 +90,5 @@ class Orchestrator:
 
     def get_dag_status(self, dag: DAG) -> Dict[str, Any]:
         return {
-            task_id: task.status.value for task_id, task in dag.tasks.items()
+            task_id: task.status.value for task_id, task in dag.tasks.items()  # Return task statuses
         }

@@ -7,22 +7,27 @@ dag:
         message: "Inizio pipeline"
         delay: 2
       dependencies: []
+
+    - task_id: "terraform_init"
+      type: "TerraformTask"
+      command: "init"
+      working_dir: "./terraform"
+      dependencies: ["task_1"]
     
     - task_id: "wait_task"
       type: "WaitTask"
       params:
         delay: 5
-      dependencies: ["task_1"]
+      dependencies: ["terraform_init"]
 
     - task_id: "task_2"
-      type: "FileWriterTask"
+      type: "WaitTask"
       params:
-        filepath: "output.txt"
-        content: "Risultato elaborazione"
+        delay: 5
       dependencies: ["wait_task"]
     
     - task_id: "task_3"
-      type: "PrintTask"
+      type: "WaitTask"
       params:
-        message: "Fine pipeline"
+        delay: 5
       dependencies: ["task_2"]

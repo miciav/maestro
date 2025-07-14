@@ -5,6 +5,7 @@ from rich import get_console
 from maestro.tasks.base import BaseTask
 
 class PrintTask(BaseTask):
+    """A task that prints a message to the console."""
     message: str
     delay: Optional[int] = 0
 

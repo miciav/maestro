@@ -89,6 +89,31 @@ class DisplayManager:
         self.progress_task_id = self.progress.add_task("progress", total=self.progress_tracker.total_tasks,
                                                        completed=self.progress_tracker.completed_tasks)
 
+    def _calculate_level_groups(self):
+        level_groups = {}
+        all_nodes = set(self.dag.nodes())
+        processed_nodes = set()
+        current_level = 0
+
+        while processed_nodes != all_nodes:
+            current_level_nodes = []
+            for node in all_nodes - processed_nodes:
+                predecessors = set(self.dag.predecessors(node))
+                if predecessors.issubset(processed_nodes):
+                    current_level_nodes.append(node)
+
+            if not current_level_nodes:
+                # Handle cycles or other issues
+                remaining_nodes = list(all_nodes - processed_nodes)
+                if remaining_nodes:
+                    level_groups[current_level] = remaining_nodes
+                break  # Exit loop
+
+            level_groups[current_level] = current_level_nodes
+            processed_nodes.update(current_level_nodes)
+            current_level += 1
+        return level_groups
+
     def _get_status_symbol(self, status: str):
         symbols = {
             "pending": "⏳",
@@ -106,8 +131,9 @@ class DisplayManager:
         symbol = self._get_status_symbol(status)
         duration = self.status_manager.get_task_duration(node)
         duration_str = f" ({duration:.1f}s)" if duration else ""
-        task_content = f" {symbol} {node}{duration_str} "
-        return len(task_content)
+        # Use rich.text.Text to correctly measure width of all characters, including symbols
+        task_text = Text(f" {symbol} {node}{duration_str} ")
+        return task_text.cell_len + 2  # Add 2 for borders
 
     def _render_dag_visualization(self):
         """Render an elegant horizontal DAG with rich styling"""
@@ -120,28 +146,8 @@ class DisplayManager:
                 expand=True,
             )
 
-        # Calculate levels using topological sorting approach
-        level_groups = {}
-        all_nodes = set(self.dag.nodes())
-        processed_nodes = set()
-        current_level = 0
-
-        while processed_nodes != all_nodes:
-            # Find nodes with no unprocessed predecessors
-            current_level_nodes = []
-            for node in all_nodes - processed_nodes:
-                predecessors = set(self.dag.predecessors(node))
-                if predecessors.issubset(processed_nodes):
-                    current_level_nodes.append(node)
-
-            if not current_level_nodes:
-                # Handle cycles or other issues - add remaining nodes
-                current_level_nodes = list(all_nodes - processed_nodes)
-
-            # Add to level groups
-            level_groups[current_level] = current_level_nodes
-            processed_nodes.update(current_level_nodes)
-            current_level += 1
+        # Calculate levels using the new method
+        level_groups = self._calculate_level_groups()
 
         # Create rich content
         content_parts = []
@@ -163,91 +169,51 @@ class DisplayManager:
             level_text = Text(f"Level {level + 1}:", style="bold white")
             content_parts.append(level_text)
 
-            # Calculate box widths for this level
-            box_widths = {node: self._calculate_task_display_width(node) for node in level_nodes}
+            # Create a table for the level
+            grid = Table.grid(expand=True)
+            for _ in level_nodes:
+                grid.add_column()
 
-            # Create top border line
-            top_line = Text()
-            for i, node in enumerate(level_nodes):
+            # Prepare row content
+            top_row = []
+            middle_row = []
+            bottom_row = []
+
+            for node in level_nodes:
                 status = self.status_manager.get_task_status(node)
                 box_style = self._get_box_style(status)
-                width = box_widths[node]
-
-                if i > 0:
-                    top_line.append("  ──→  ", style="dim")
-
-                top_line.append("┌", style=box_style)
-                top_line.append("─" * width, style=box_style)
-                top_line.append("┐", style=box_style)
-
-            content_parts.append(top_line)
-
-            # Create middle line with content
-            middle_line = Text()
-            for i, node in enumerate(level_nodes):
-                status = self.status_manager.get_task_status(node)
+                width = self._calculate_task_display_width(node)
                 symbol = self._get_status_symbol(status)
                 duration = self.status_manager.get_task_duration(node)
-                box_style = self._get_box_style(status)
-                width = box_widths[node]
-
-                if i > 0:
-                    middle_line.append("       ", style="dim")
-
                 duration_str = f" ({duration:.1f}s)" if duration else ""
                 task_content = f" {symbol} {node}{duration_str} "
 
-                middle_line.append("│", style=box_style)
-                middle_line.append(task_content, style=f"bold {box_style}")
-                middle_line.append("│", style=box_style)
+                top_row.append(f"┌{'─' * (width - 2)}┐")
+                middle_row.append(f"│{task_content.center(width - 2)}│")
+                bottom_row.append(f"└{'─' * (width - 2)}┘")
 
-            content_parts.append(middle_line)
+            grid.add_row(*[Text(item, style=self._get_box_style(self.status_manager.get_task_status(node))) for item, node in zip(top_row, level_nodes)])
+            grid.add_row(*[Text(item, style=self._get_box_style(self.status_manager.get_task_status(node))) for item, node in zip(middle_row, level_nodes)])
+            grid.add_row(*[Text(item, style=self._get_box_style(self.status_manager.get_task_status(node))) for item, node in zip(bottom_row, level_nodes)])
 
-            # Create bottom border line
-            bottom_line = Text()
-            for i, node in enumerate(level_nodes):
-                status = self.status_manager.get_task_status(node)
-                box_style = self._get_box_style(status)
-                width = box_widths[node]
-
-                if i > 0:
-                    bottom_line.append("       ", style="dim")
-
-                bottom_line.append("└", style=box_style)
-                bottom_line.append("─" * width, style=box_style)
-                bottom_line.append("┘", style=box_style)
-
-            content_parts.append(bottom_line)
+            content_parts.append(grid)
 
             # Add arrows to next level
             if level < max_level:
-                # First arrow line
-                arrow_line = Text()
-                for i, node in enumerate(level_nodes):
-                    width = box_widths[node]
+                arrow_grid = Table.grid(expand=True)
+                for _ in level_nodes:
+                    arrow_grid.add_column()
 
-                    if i > 0:
-                        arrow_line.append("       ", style="dim")
+                arrow_row1 = []
+                arrow_row2 = []
+                for node in level_nodes:
+                    width = self._calculate_task_display_width(node)
+                    arrow_row1.append(" " * (width // 2) + "│" + " " * (width - width // 2 - 1))
+                    arrow_row2.append(" " * (width // 2) + "▼" + " " * (width - width // 2 - 1))
 
-                    arrow_line.append(" " * (width // 2), style="dim")
-                    arrow_line.append("│", style="cyan")
-                    arrow_line.append(" " * (width - width // 2 - 1), style="dim")
-
-                content_parts.append(arrow_line)
-
-                # Second arrow line
-                arrow_line2 = Text()
-                for i, node in enumerate(level_nodes):
-                    width = box_widths[node]
-
-                    if i > 0:
-                        arrow_line2.append("       ", style="dim")
-
-                    arrow_line2.append(" " * (width // 2), style="dim")
-                    arrow_line2.append("▼", style="cyan")
-                    arrow_line2.append(" " * (width - width // 2 - 1), style="dim")
-
-                content_parts.append(arrow_line2)
+                arrow_grid.add_row(*[Text(item, style="cyan") for item in arrow_row1])
+                arrow_grid.add_row(*[Text(item, style="cyan") for item in arrow_row2])
+                content_parts.append(arrow_grid)
 
             content_parts.append(Text(""))  # Empty line
 
@@ -325,17 +291,21 @@ class DisplayManager:
             expand=True
         ))
 
-        layout["body"].split(
+        # The body is now split vertically. The DAG panel will be scrollable.
+        layout["body"].split_row(
             Layout(name="dag_viz"),
-            Layout(name="status_and_progress"),
+            Layout(name="side_panel", size=40),  # Give side panel a fixed size
         )
 
-        layout["dag_viz"].update(self._render_dag_visualization())
-
-        layout["status_and_progress"].split(
+        # The side panel contains status and progress
+        layout["side_panel"].split(
             Layout(name="execution_status"),
             Layout(name="overall_progress"),
         )
+
+        # The DAG visualization is now the main, scrollable panel
+        dag_renderable = self._render_dag_visualization()
+        layout["dag_viz"].update(dag_renderable)
 
         layout["execution_status"].update(self._render_execution_status())
         layout["overall_progress"].update(self._render_overall_progress())

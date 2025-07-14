@@ -29,3 +29,5 @@ build/
 
 # Specific to this project
 output.txt
+**/**.tfvars
+**/**/.terraform/

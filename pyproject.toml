@@ -8,6 +8,7 @@ dependencies = [
     "pyyaml>=6.0",
     "networkx>=3.1",
     "rich",
+    "ansible_runner>=2.3.1"
 ]
 
 [project.scripts]

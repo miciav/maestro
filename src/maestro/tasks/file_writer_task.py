@@ -5,12 +5,13 @@ from rich import get_console
 from maestro.tasks.base import BaseTask
 
 class FileWriterTask(BaseTask):
+    """A task that writes content to a file."""
     filepath: str
     content: str
-    mode: Literal["append", "overwrite"] = "overwrite"
+    mode: Literal["append", "overwrite"] = "overwrite" # Mode to write to the file, either append or overwrite
 
     def execute(self):
-        directory = os.path.dirname(self.filepath)
+        directory: str = os.path.dirname(self.filepath)
         if directory:
             os.makedirs(directory, exist_ok=True)
         write_mode = 'a' if self.mode == "append" else 'w'
