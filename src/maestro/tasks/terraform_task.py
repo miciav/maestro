@@ -13,7 +13,7 @@ class TerraformTask(BaseTask):
     """
 
     # Define Pydantic fields
-    command: str
+    command: Optional[str] = None
     working_dir: str  # This can be relative to the DAG file
     workspace: Optional[str] = None
     plan_file: str = "terraform.tfplan"
@@ -67,7 +67,8 @@ class TerraformTask(BaseTask):
             # Now build the actual command
             cmd = [tf_cmd]
 
-        cmd.append(self.command)
+        if self.command:
+            cmd.append(self.command)
 
         if self.command == "init":
             for key, value in self.backend_config.items():
