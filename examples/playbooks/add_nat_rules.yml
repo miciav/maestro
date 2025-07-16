@@ -1,0 +1,161 @@
+---
+- name: Add NAT rules for Proxmox VMs with dynamic port assignment
+  hosts: proxmox_hosts
+  become: true
+  vars:
+    port_range_start: 145
+    port_range_end: 15000
+
+  tasks:
+    - name: Ensure interfaces file exists
+      ansible.builtin.stat:
+        path: "{{ interfaces_file }}"
+      register: interfaces_file_stat
+
+    - name: Fail if interfaces file does not exist
+      ansible.builtin.fail:
+        msg: "Interfaces file {{ interfaces_file }} does not exist"
+      when: not interfaces_file_stat.stat.exists
+
+    - name: Get list of currently used ports
+      ansible.builtin.shell: |
+        ss -tln | awk 'NR>1 {gsub(/.*:/,""),"",$4); print $4}' | sort -n | uniq
+      register: used_ports_result
+      changed_when: false
+
+    - name: Parse used ports
+      ansible.builtin.set_fact:
+        used_ports: "{{ used_ports_result.stdout_lines | map('int') | list }}"
+
+    - name: Get existing NAT rules from interfaces file
+      ansible.builtin.shell: |
+        grep -E "dport [0-9]+ -j DNAT" {{ interfaces_file }} | grep -oE "dport [0-9]+" | awk '{print $2}' | sort -n | uniq || true
+      register: existing_nat_ports_result
+      changed_when: false
+
+    - name: Parse existing NAT ports
+      ansible.builtin.set_fact:
+        existing_nat_ports: "{{ existing_nat_ports_result.stdout_lines | map('int') | list | default([]) }}"
+
+    - name: Combine all reserved ports
+      ansible.builtin.set_fact:
+        reserved_ports: "{{ (used_ports + existing_nat_ports) | unique | sort }}"
+
+    - name: Generate available ports list
+      ansible.builtin.set_fact:
+        available_ports: "{{ range(port_range_start, port_range_end) | difference(reserved_ports) | list }}"
+
+    - name: Check if we have enough available ports
+      ansible.builtin.fail:
+        msg: "Not enough available ports. Need {{ groups['port_mappings'] | length }} ports but only {{ available_ports | length }} available in range {{ port_range_start }}-{{ port_range_end }}"
+      when: available_ports | length < groups['port_mappings'] | length
+
+    - name: Assign ports to VM services (deterministic order)
+      ansible.builtin.set_fact:
+        vm_port_mappings: "{{ vm_port_mappings | default({}) | combine({item.0: available_ports[item.1]}) }}"
+      loop: "{{ groups['port_mappings'] | sort | zip(range(groups['port_mappings'] | length)) | list }}"
+
+    - name: Display port assignments
+      ansible.builtin.debug:
+        msg: |
+          {% for vm_service in groups['port_mappings'] | sort %}
+          {% if hostvars[vm_service]['service'] == 'SSH' %}
+          SSH_PORT_MAPPING: {{ hostvars[vm_service]['vm_name'] }}:{{ vm_port_mappings[vm_service] }}
+          {% elif hostvars[vm_service]['service'] == 'k3s' %}
+          K3S_PORT_MAPPING: {{ hostvars[vm_service]['vm_name'] }}:{{ vm_port_mappings[vm_service] }}
+          {% endif %}
+          {% endfor %}
+
+    - name: Remove existing NAT rules for these VMs (cleanup)
+      ansible.builtin.shell: |
+        grep -v "# VM {{ hostvars[item]['vm_id'] }} ({{ hostvars[item]['vm_name'] }}) - {{ hostvars[item]['service'] }}" {{ interfaces_file }} > {{ interfaces_file }}.tmp && mv {{ interfaces_file }}.tmp {{ interfaces_file }} || true
+      loop: "{{ groups['port_mappings'] }}"
+
+
+
+    - name: Add post-up NAT rules with dynamic ports
+      community.general.interfaces_file:
+        dest: "{{ interfaces_file }}"
+        iface: "{{ target_interface }}"
+        option: "post-up"
+        value: "iptables -t nat -A PREROUTING -i {{ source_interface }} -p tcp --dport {{ vm_port_mappings[item] }} -j DNAT --to {{ hostvars[item]['vm_ip'] }}:{{ hostvars[item]['vm_port'] }} # VM {{ hostvars[item]['vm_id'] }} ({{ hostvars[item]['vm_name'] }}) - {{ hostvars[item]['service'] }}"
+        state: present
+      loop: "{{ groups['port_mappings'] | sort }}"
+
+    - name: Add post-down NAT rules with dynamic ports
+      community.general.interfaces_file:
+        dest: "{{ interfaces_file }}"
+        iface: "{{ target_interface }}"
+        option: "post-down"
+        value: "iptables -t nat -D PREROUTING -i {{ source_interface }} -p tcp --dport {{ vm_port_mappings[item] }} -j DNAT --to {{ hostvars[item]['vm_ip'] }}:{{ hostvars[item]['vm_port'] }} # VM {{ hostvars[item]['vm_id'] }} ({{ hostvars[item]['vm_name'] }}) - {{ hostvars[item]['service'] }}"
+        state: present
+      loop: "{{ groups['port_mappings'] | sort }}"
+
+    - name: Flush all iptables rules
+      ansible.builtin.command: iptables -t nat -F PREROUTING
+      become: true
+      changed_when: true
+
+    - name: Reload network interfaces
+      ansible.builtin.command: ifreload --all
+      become: true
+      changed_when: true
+
+
+    - name: Perform SSH connectivity test for SSH services
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_ssh_private_key_file }} \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=10 \
+            -o BatchMode=yes \
+            -p {{ vm_port_mappings[item] }} \
+            {{ hostvars[item]['vm_user'] }}@{{ ansible_host }} \
+            'echo "SSH connection successful to $(hostname)"'
+      loop: "{{ groups['port_mappings'] | sort }}"
+      when:
+        - hostvars[item]['vm_port'] == 22
+        - hostvars[item]['vm_user'] is defined
+        - ansible_ssh_private_key_file is defined
+      register: ssh_test_results
+      ignore_errors: true
+      delegate_to: localhost
+      become: false
+
+    - name: Display SSH test results
+      ansible.builtin.debug:
+        msg: |
+          SSH Connection Test Results:
+          {% for result in ssh_test_results.results | default([]) %}
+          {% if not result.skipped | default(false) %}
+          {% set vm_service = result.item %}
+          - {{ hostvars[vm_service]['vm_name'] }} ({{ hostvars[vm_service]['service'] }}): 
+            Port {{ vm_port_mappings[vm_service] }} -> {{ hostvars[vm_service]['vm_ip'] }}:22
+            Status: {% if result.rc == 0 %}✅ SUCCESS{% else %}❌ FAILED{% endif %}
+            {% if result.rc == 0 %}Response: {{ result.stdout }}{% else %}Error: {{ result.stderr | default('Connection failed') }}{% endif %}
+          {% endif %}
+          {% endfor %}
+
+    - name: Display summary with port mappings
+      ansible.builtin.debug:
+        msg: |
+          Successfully configured {{ groups['port_mappings'] | length }} NAT port mapping rules:
+          {% for vm_service in groups['port_mappings'] | sort %}
+          - {{ hostvars[vm_service]['vm_name'] }} ({{ hostvars[vm_service]['service'] }}): {{ ansible_host }}:{{ vm_port_mappings[vm_service] }} -> {{ hostvars[vm_service]['vm_ip'] }}:{{ hostvars[vm_service]['vm_port'] }}
+          {% endfor %}
+
+          SSH Connection Commands (⚠ for test use only):
+          {% for vm_service in groups['port_mappings'] | sort %}
+          {% if hostvars[vm_service]['vm_port'] == 22 and hostvars[vm_service]['vm_user'] is defined %}
+          ssh -i {{ ansible_ssh_private_key_file }} -p {{ vm_port_mappings[vm_service] }} {{ hostvars[vm_service]['vm_user'] }}@{{ ansible_host }}  # {{ hostvars[vm_service]['vm_name'] }}
+          {% endif %}
+          {% endfor %}
+
+
+    - name: Generate SSH connections inventory file
+      ansible.builtin.template:
+        src: ../templates/ssh_inventory.ini.j2
+        dest: "{{ inventory_dir }}/inventory_updates.ini"
+      delegate_to: localhost
+      run_once: true
+      become: false

@@ -14,13 +14,12 @@ class AnsibleTask(BaseTask):
     playbook: str
     inventory: str
     private_data_dir: str = "./"
-    verbosity: int = 1
+    verbosity: int = 0
     extra_vars: Dict[str, Any] = Field(default_factory=dict)
-    become: bool = False
     become_user: Optional[str] = None
 
     def get_absolute_paths(self):
-        """Resolve paths relative to DAG file if needed."""
+        """Resolve paths relative to the DAG file if needed."""
         if self.dag_file_path:
             dag_dir = Path(self.dag_file_path).parent
             playbook_path = dag_dir / self.playbook if not Path(self.playbook).is_absolute() else Path(self.playbook)
@@ -54,11 +53,8 @@ class AnsibleTask(BaseTask):
             private_data_dir=data_dir,
             playbook=playbook_path,
             inventory=inventory_path,
-            quiet=False,
-            verbosity=self.verbosity,
-            extravars=self.extra_vars,
-            become=self.become,
-            become_user=self.become_user,
+            quiet=True,
+            verbosity=self.verbosity
         )
 
         if result.status == "successful":

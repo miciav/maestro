@@ -1,0 +1,98 @@
+---
+- name: Configurazione iniziale VM Ubuntu
+  hosts: vms
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    packages_to_install:
+      - curl
+      - wget
+      - vim
+      - htop
+      - git
+     # - docker.io
+      - ufw
+      - python3-apt
+    
+    
+  tasks:
+    - name: Aggiorna cache dei pacchetti
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Installa pacchetti base
+      apt:
+        name: "{{ packages_to_install }}"
+        state: present
+    
+    # - name: Avvia e abilita Docker
+    #   systemd:
+    #     name: docker
+    #     state: started
+    #     enabled: yes
+    
+    # - name: Aggiungi utente {{ ansible_user }} al gruppo docker
+    #   user:
+    #     name: "{{ ansible_user }}"
+    #     groups: docker
+    #     append: yes
+    #   notify: Restart docker # Notifica l'handler per riavviare docker
+    
+    - name: Configura UFW - abilita SSH
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+    
+    - name: Configura UFW - abilita HTTP
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+    
+    - name: Configura UFW - abilita HTTPS
+      ufw:
+        rule: allow
+        port: '443'
+        proto: tcp
+    
+    - name: Configura UFW - abilita K3s API
+      ufw:
+        rule: allow
+        port: '6443'
+        proto: tcp
+
+    - name: Abilita UFW
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+    
+    - name: Crea directory per applicazioni
+      file:
+        path: /opt/apps
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+    
+    - name: Configura timezone
+      timezone:
+        name: Europe/Rome
+    
+    - name: Riavvia la VM se necessario
+      reboot:
+        msg: "Riavvio per applicare tutte le configurazioni"
+        connect_timeout: 5
+        reboot_timeout: 300
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+      when: ansible_facts['reboot_required'] is defined and ansible_facts['reboot_required']
+
+  # handlers:
+  #   - name: Restart docker
+  #     systemd:
+  #       name: docker
+  #       state: restarted

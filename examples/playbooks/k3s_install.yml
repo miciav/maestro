@@ -1,0 +1,96 @@
+---
+- name: Install K3s on remote nodes
+  hosts: k3s_nodes
+  become: yes
+  tasks:
+    - name: Check if K3s uninstall script exists
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s-uninstall.sh
+      register: k3s_uninstall_script
+
+    - name: Run K3s uninstall script if it exists
+      ansible.builtin.shell: /usr/local/bin/k3s-uninstall.sh
+      when: k3s_uninstall_script.stat.exists
+    - name: Download K3s install script
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: /tmp/k3s_install.sh
+        mode: '0755'
+
+    - name: Install K3s (single node)
+      ansible.builtin.shell: /tmp/k3s_install.sh --tls-san {{ ansible_host }}
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Check K3s service status
+      ansible.builtin.systemd:
+        name: k3s
+        state: started
+        enabled: yes
+
+    - name: Check K3s service status
+      ansible.builtin.systemd:
+        name: k3s
+        state: started
+        enabled: yes
+
+    - name: Verify K3s API server is listening internally on 6443
+      ansible.builtin.wait_for:
+        port: 6443
+        host: "localhost"
+        state: started
+        timeout: 300 # Wait up to 5 minutes for the port to be open
+        msg: "K3s API server did not start internally on port 6443"
+
+    - name: Display K3s node token
+      ansible.builtin.debug:
+        msg: "K3s node token: {{ k3s_node_token.stdout }}"
+      when: k3s_node_token.stdout is defined and k3s_node_token.stdout != ''
+
+    - name: Remove old Kubeconfig files for this host
+      ansible.builtin.file:
+        path: ~/.kube/config-{{ inventory_hostname }}
+        state: absent
+      delegate_to: localhost
+      become: no
+
+    - name: Ensure ~/.kube directory exists on control machine
+      ansible.builtin.file:
+        path: ~/.kube
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      become: no
+
+    - name: Copy Kubeconfig to user's home directory
+      ansible.builtin.fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: ~/.kube/config-{{ inventory_hostname }}
+        flat: yes
+
+    - name: Update Kubeconfig server address (replace 127.0.0.1 with ansible_host)
+      ansible.builtin.replace:
+        path: ~/.kube/config-{{ inventory_hostname }}
+        regexp: '127\.0\.0\.1'
+        replace: '{{ ansible_host }}'
+      delegate_to: localhost
+      become: no
+
+    - name: Update Kubeconfig server address (replace port with k3s_api_port_external)
+      ansible.builtin.replace:
+        path: ~/.kube/config-{{ inventory_hostname }}
+        regexp: 'server: https:\/\/{{ ansible_host }}:[0-9]+'
+        replace: 'server: https://{{ ansible_host }}:{{ k3s_api_port_external }}'
+      delegate_to: localhost
+      become: no
+
+    - name: Set Kubeconfig permissions
+      ansible.builtin.file:
+        path: ~/.kube/config-{{ inventory_hostname }}
+        mode: '0600'
+      delegate_to: localhost
+      become: no
+
+    - name: Display Kubeconfig path
+      ansible.builtin.debug:
+        msg: "Kubeconfig for {{ inventory_hostname }} saved to ~/.kube/config-{{ inventory_hostname }}"

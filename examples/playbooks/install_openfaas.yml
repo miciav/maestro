@@ -1,0 +1,95 @@
+---
+- name: Install OpenFaaS on K3s using Helm
+  hosts: k3s_nodes
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tasks:
+    - name: Check if Helm is installed
+      ansible.builtin.command: which helm
+      register: helm_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install Helm if not present
+      ansible.builtin.shell: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      when: helm_check.rc != 0
+
+    - name: Add OpenFaaS Helm repository
+      ansible.builtin.shell: |
+        helm repo add openfaas https://openfaas.github.io/faas-netes/
+      register: helm_repo_add
+      failed_when: helm_repo_add.rc != 0 and 'already exists' not in helm_repo_add.stderr
+      changed_when: "'already exists' not in helm_repo_add.stderr"
+
+    - name: Update Helm repositories
+      ansible.builtin.shell: |
+        helm repo update
+      register: helm_repo_update
+      changed_when: true
+
+    - name: Check if OpenFaaS is already installed
+      ansible.builtin.shell: |
+        helm list -n openfaas | grep openfaas
+      register: openfaas_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create OpenFaaS function namespace
+      ansible.builtin.shell: |
+        kubectl create namespace openfaas-fn --dry-run=client -o yaml | kubectl apply -f -
+      register: openfaas_fn_namespace
+      when: openfaas_check.rc != 0
+
+    - name: Install OpenFaaS
+      ansible.builtin.shell: |
+        helm upgrade --install openfaas openfaas/openfaas \
+          --namespace openfaas \
+          --create-namespace \
+          --set functionNamespace=openfaas-fn \
+          --set generateBasicAuth=true \
+          --set gateway.replicas=1 \
+          --set queueWorker.replicas=1 \
+          --set prometheus.create=true \
+          --set alertmanager.create=true \
+          --wait --timeout=10m
+      register: openfaas_install
+      when: openfaas_check.rc != 0
+
+    - name: Wait for OpenFaaS to be ready
+      ansible.builtin.shell: |
+        kubectl wait --for=condition=ready pod -l app=gateway -n openfaas --timeout=300s
+      register: openfaas_wait
+      when: openfaas_install.changed
+      failed_when: false
+
+    - name: Get OpenFaaS admin password
+      ansible.builtin.shell: |
+        kubectl get secret -n openfaas basic-auth -o jsonpath="{.data.basic-auth-password}" | base64 --decode
+      register: openfaas_password
+      when: openfaas_install.changed or openfaas_check.rc == 0
+      failed_when: false
+
+    - name: Display OpenFaaS installation info
+      ansible.builtin.debug:
+        msg: |
+          OpenFaaS has been installed successfully!
+          Gateway URL: http://{{ ansible_host }}:31112
+          Username: admin
+          Password: {{ openfaas_password.stdout if openfaas_password.stdout is defined else 'Password retrieval failed - check manually' }}
+          
+          To access OpenFaaS from your local machine:
+          kubectl port-forward -n openfaas svc/gateway 8080:8080
+          
+          Then visit: http://localhost:8080
+      when: openfaas_password.stdout is defined
+
+    - name: Verify OpenFaaS pods are running
+      ansible.builtin.shell: |
+        kubectl get pods -n openfaas
+      register: openfaas_pods
+      
+    - name: Display OpenFaaS pods status
+      ansible.builtin.debug:
+        msg: "{{ openfaas_pods.stdout }}"

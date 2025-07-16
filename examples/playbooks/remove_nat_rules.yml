@@ -1,0 +1,33 @@
+---
+- name: Remove NAT rules for Proxmox VMs
+  hosts: proxmox_hosts
+  become: true
+  vars:
+    inventory_file: "{{ inventory_dir }}/inventory-updates.ini"
+
+  tasks:
+    - name: Ensure interfaces file exists
+      ansible.builtin.stat:
+        path: "{{ interfaces_file }}"
+      register: interfaces_file_stat
+
+    - name: Fail if interfaces file does not exist
+      ansible.builtin.fail:
+        msg: "Interfaces file {{ interfaces_file }} does not exist"
+      when: not interfaces_file_stat.stat.exists
+
+    - name: Remove existing NAT rules for these VMs (cleanup)
+      ansible.builtin.shell: |
+        grep -v "# VM {{ hostvars[item]['vm_id'] }} ({{ hostvars[item]['vm_name'] }}) - {{ hostvars[item]['service'] }}" {{ interfaces_file }} > {{ interfaces_file }}.tmp && mv {{ interfaces_file }}.tmp {{ interfaces_file }} || true
+      loop: "{{ groups['port_mappings'] }}"
+
+    - name: Flush all iptables rules
+      ansible.builtin.command: iptables -t nat -F PREROUTING
+      become: true
+      changed_when: true
+
+    - name: Reload network interfaces
+      ansible.builtin.command: ifreload --all
+      become: true
+      changed_when: true
+

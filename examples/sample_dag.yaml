@@ -1,22 +1,19 @@
 dag:
   name: "esempio_dag"
   tasks:
-    - task_id: "task_1"
-      type: "PrintTask"
-      params:
-        message: "Inizio pipeline"
-        delay: 2
-      dependencies: []
-
     - task_id: "run_terraform_workflow"
       type: "ExtendedTerraformTask"
       working_dir: "./terraform"
       workflow_mode: true
       auto_approve: true
-      dependencies: ["task_1"]
-    
+      dependencies: []
+    - task_id: "run_add_rules_ansible"
+      type: "AnsibleTask"
+      playbook: "./playbooks/remove_nat_rules.yml"
+      inventory: "./inventories/inventory-nat-rules.ini"
+      dependencies: ["run_terraform_workflow"]
     - task_id: "task_3"
       type: "PrintTask"
       params:
         message: "Fine pipeline"
-      dependencies: ["run_terraform_workflow"]
+      dependencies: ["run_add_rules_ansible"]
