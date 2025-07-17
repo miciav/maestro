@@ -9,7 +9,7 @@ class PrintTask(BaseTask):
     message: str
     delay: Optional[int] = 0
 
-    def execute(self):
+    def execute_local(self):
         get_console().print(f"[PrintTask] {self.message}")
         if self.delay:
             time.sleep(self.delay)

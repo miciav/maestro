@@ -1,0 +1,37 @@
+# Example terraform.tfvars file for role-based VM deployment
+# Copy this file to terraform.tfvars and modify according to your needs
+
+# Proxmox configuration
+proxmox_api_url = "https://your-proxmox-host:8006/api2/json"
+proxmox_user = "root@pam"
+proxmox_password = "your-password"
+proxmox_host = "your-proxmox-host"
+proxmox_host_user = "root"
+
+# VM configuration
+vm_count = 4
+vm_name_prefix = "my-cluster"
+target_node = "your-proxmox-node"
+template_id = 109
+
+# VM Role Configuration
+# This example creates:
+# - 2 VMs with k3s role (my-cluster-1, my-cluster-2)
+# - 2 VMs with docker role (my-cluster-3, my-cluster-4)
+vm_roles = {
+  "my-cluster-1" = "k3s"
+  "my-cluster-2" = "k3s"
+  "my-cluster-3" = "docker"
+  "my-cluster-4" = "docker"
+}
+
+# Default role for VMs not explicitly specified in vm_roles
+default_vm_role = "k3s"
+
+# Cloud-init configuration
+ci_user = "ubuntu"
+ci_password = "your-password"
+ssh_key_path = "~/.ssh/id_rsa.pub"
+
+# Deployment settings
+deployment_delay = 30

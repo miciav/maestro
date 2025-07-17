@@ -114,7 +114,7 @@ class TerraformTask(BaseTask):
             print(e.stderr)
             raise
 
-    def execute(self):
+    def execute_local(self):
         absolute_working_dir = self.get_absolute_working_dir()
         print(f"[TerraformTask] Executing '{self.task_id}'")
         print(f"[TerraformTask] Working directory: {absolute_working_dir}")

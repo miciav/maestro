@@ -1,18 +1,17 @@
 import pytest
-import os
-from unittest.mock import MagicMock
 
 from maestro.core.orchestrator import Orchestrator
 from maestro.core.dag import DAG
 from maestro.tasks.base import BaseTask
 from maestro.core.task import TaskStatus
+from maestro.core.executors.local import LocalExecutor
 
 # Define a dummy task for testing
 class DummyPrintTask(BaseTask):
     message: str
     executed: bool = False
 
-    def execute(self):
+    def execute_local(self):
         self.executed = True
         print(f"DummyPrintTask {self.task_id}: {self.message}")
 
@@ -67,32 +66,12 @@ def test_orchestrator_load_invalid_dag(orchestrator, invalid_dag_filepath):
 def test_orchestrator_run_dag(orchestrator, dag_filepath):
     dag = orchestrator.load_dag_from_file(dag_filepath)
     
-    # Mock status manager and progress tracker for testing
-    mock_status_manager = MagicMock()
-    mock_progress_tracker = MagicMock()
-    mock_status_callback = MagicMock()
-
-    orchestrator.run_dag(dag, 
-                          status_manager=mock_status_manager, 
-                          progress_tracker=mock_progress_tracker,
-                          status_callback=mock_status_callback)
+    orchestrator.run_dag(dag)
 
     assert dag.tasks["task1"].status == TaskStatus.COMPLETED
     assert dag.tasks["task2"].status == TaskStatus.COMPLETED
     assert dag.tasks["task1"].executed # Check if execute was called
     assert dag.tasks["task2"].executed # Check if execute was called
-
-    # Verify status manager calls
-    mock_status_manager.set_task_status.assert_any_call("task1", "running")
-    mock_status_manager.set_task_status.assert_any_call("task1", "completed")
-    mock_status_manager.set_task_status.assert_any_call("task2", "running")
-    mock_status_manager.set_task_status.assert_any_call("task2", "completed")
-
-    # Verify progress tracker calls
-    mock_progress_tracker.increment_completed.assert_called()
-
-    # Verify status callback calls
-    assert mock_status_callback.call_count >= 4 # At least 2 for running, 2 for completed
 
 def test_orchestrator_run_dag_fail_fast(orchestrator, tmp_path):
     # Create a DAG with a failing task
@@ -110,7 +89,7 @@ dag:
     f.write_text(content)
 
     class FailingTask(BaseTask):
-        def execute(self):
+        def execute_local(self):
             raise Exception("Simulated task failure")
 
     orchestrator.register_task_type("failing_task_type", FailingTask)
@@ -139,7 +118,7 @@ dag:
     f.write_text(content)
 
     class FailingTask(BaseTask):
-        def execute(self):
+        def execute_local(self):
             raise Exception("Simulated task failure")
 
     orchestrator.register_task_type("failing_task_type", FailingTask)

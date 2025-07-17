@@ -12,6 +12,7 @@ def main(
     log_level: str = typer.Option("INFO", help="Logging level (e.g., DEBUG, INFO, WARNING)."),
     db_path: str = typer.Option("maestro.db", help="Path to the SQLite database file."),
     fail_fast: bool = typer.Option(True, help="Stop execution on first task failure."),
+    executor: str = typer.Option("local", help="Executor to use for tasks (local, ssh, docker, kubernetes)."),
 ):
     """
     Modern CLI for Maestro to run and visualize DAGs.

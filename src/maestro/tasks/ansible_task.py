@@ -34,7 +34,7 @@ class AnsibleTask(BaseTask):
 
         return str(playbook_path), str(inventory_path), str(data_dir)
 
-    def execute(self):
+    def execute_local(self):
         console = get_console()
         console.print(f"[AnsibleTask] Executing '{self.task_id}'")
 

@@ -11,6 +11,6 @@ class WaitTask(BaseTask):
     """
     delay: int
 
-    def execute(self):
+    def execute_local(self):
         get_console().print(f"[WaitTask] Waiting for {self.delay} seconds...")
         time.sleep(self.delay)

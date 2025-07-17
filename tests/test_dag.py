@@ -5,7 +5,7 @@ from maestro.core.dag import DAG
 from maestro.core.task import Task
 
 class DummyTask(Task):
-    def execute(self):
+    def execute_local(self):
         pass
 
 def test_dag_add_task():

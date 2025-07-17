@@ -24,6 +24,7 @@ class Task(BaseModel, ABC):
     dag_file_path: Optional[str] = None # Path to the original DAG file
     dependencies: List[str] = Field(default_factory=list)
     status: TaskStatus = TaskStatus.PENDING
+    executor: str = "local" # New field for executor type
     on_success: Optional[Callable] = None # Callback for when the task completes successfully
     on_failure: Optional[Callable] = None # Callback for when the task fails
 
@@ -31,9 +32,13 @@ class Task(BaseModel, ABC):
         arbitrary_types_allowed = True
 
     @abstractmethod
-    def execute(self):
-        """The main execution logic for the task."""
+    def execute_local(self):
+        """The main execution logic for the task when run locally."""
         pass
+
+    def execute(self, executor_instance):
+        """Delegates execution to the specified executor."""
+        executor_instance.execute(self)
 
     def __repr__(self):
         return f"Task(task_id='{self.task_id}', status='{self.status.value}')"

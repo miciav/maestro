@@ -77,6 +77,10 @@ class DAGLoader:
         # Add DAG file path
         task_config["dag_file_path"] = dag_file_path
 
+        # Set default executor if not specified
+        if "executor" not in task_config:
+            task_config["executor"] = "local"
+
         try:
             return task_class(**task_config)
         except Exception as e:

@@ -10,6 +10,7 @@ from maestro.tasks.base import BaseTask
 from maestro.core.Task_Registry import TaskRegistry
 from maestro.core.dag_loader import DAGLoader
 from maestro.core.status_manager import StatusManager
+from maestro.core.executors.factory import ExecutorFactory
 
 
 class Orchestrator:
@@ -18,6 +19,7 @@ class Orchestrator:
         self.dag_loader = DAGLoader(self.task_registry)
         self.console = get_console()
         self.status_manager = StatusManager(db_path)
+        self.executor_factory = ExecutorFactory()
         self._setup_logging(log_level)
 
     def _setup_logging(self, log_level: str):
@@ -79,7 +81,8 @@ class Orchestrator:
                         status_callback()
 
                     self.logger.info(f"Executing task: {task.task_id}")
-                    task.execute()
+                    executor_instance = self.executor_factory.get_executor(task.executor)
+                    task.execute(executor_instance)
                     task.status = TaskStatus.COMPLETED
                     sm.set_task_status(dag_id, task.task_id, "completed")
                     if status_manager:

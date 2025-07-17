@@ -11,7 +11,7 @@ class DummyPrintTask(BaseTask):
     message: str
     executed: bool = False
 
-    def execute(self):
+    def execute_local(self):
         self.executed = True
 
 @pytest.fixture

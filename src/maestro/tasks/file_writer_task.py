@@ -10,7 +10,7 @@ class FileWriterTask(BaseTask):
     content: str
     mode: Literal["append", "overwrite"] = "overwrite" # Mode to write to the file, either append or overwrite
 
-    def execute(self):
+    def execute_local(self):
         directory: str = os.path.dirname(self.filepath)
         if directory:
             os.makedirs(directory, exist_ok=True)
