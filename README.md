@@ -22,11 +22,11 @@ Maestro is a simple Python task orchestrator that runs a series of tasks defined
 git clone https://github.com/your-username/maestro.git
 cd maestro
 
-# Install core dependencies using uv
-uv pip install .
+# Install dependencies (including test dependencies) using uv
+uv sync --extra test
 
-# Install test dependencies using uv
-uv pip install .[test]
+# Install the project in editable mode for local development
+uv pip install -e .
 ```
 
 ## Usage
@@ -34,25 +34,25 @@ uv pip install .[test]
 ### Running a DAG
 
 ```bash
-python -m maestro.cli run examples/sample_dag.yaml
+uv run -m maestro.cli run examples/full_sample_dag.yaml
 ```
 
 ### Validating a DAG
 
 ```bash
-python -m maestro.cli validate examples/sample_dag.yaml
+uv run -m maestro.cli validate examples/sample_dag.yaml
 ```
 
 ### Visualizing a DAG
 
 ```bash
-python -m maestro.cli visualize examples/sample_dag.yaml
+uv run -m maestro.cli visualize examples/sample_dag.yaml
 ```
 
 ### Getting DAG Status
 
 ```bash
-python -m maestro.cli status examples/sample_dag.yaml
+uv run -m maestro.cli status examples/sample_dag.yaml
 ```
 
 ## Configuration
@@ -151,7 +151,8 @@ classDiagram
     BaseTask <|-- FileWriterTask
     BaseTask <|-- WaitTask
     DAG "1" -- "*" Task : contains
-    Orchestrator ..> DAG : creates
+    Orchestrator ..> DAGLoader : uses
+    DAGLoader ..> DAG : creates
     Orchestrator ..> Task : manages
     Orchestrator ..> BaseTask : uses
     Orchestrator ..> PrintTask : uses
@@ -161,6 +162,8 @@ classDiagram
 
 ## Running Tests
 
+To run all tests, use the provided script:
+
 ```bash
-pytest
+./run_tests.sh
 ```
