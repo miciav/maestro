@@ -34,7 +34,7 @@ uv pip install -e .
 ### Running a DAG
 
 ```bash
-uv run -m maestro.cli run examples/full_sample_dag.yaml
+uv run -m maestro.cli run examples/sample_dag.yaml
 ```
 
 ### Validating a DAG
