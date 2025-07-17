@@ -1,0 +1,39 @@
+dag:
+  name: "full_sample_dag"
+  tasks:
+    - task_id: "run_terraform_workflow"
+      type: "ExtendedTerraformTask"
+      working_dir: "./terraform"
+      workflow_mode: true
+      auto_approve: true
+      dependencies: []
+    - task_id: "run_add_rules_ansible"
+      type: "AnsibleTask"
+      playbook: "./playbooks/add_nat_rules.yml"
+      inventory: "./inventories/inventory-nat-rules.ini"
+      dependencies: ["run_terraform_workflow"]
+    - task_id: "configure_vms"
+      type: "AnsibleTask"
+      playbook: "./playbooks/configure-vms.yml"
+      inventory: "./inventories/inventory_updates.ini"
+      dependencies: [ "run_add_rules_ansible" ]
+    - task_id: "k3s_installation"
+      type: "AnsibleTask"
+      playbook: "./playbooks/k3s_install.yml"
+      inventory: "./inventories/inventory_updates.ini"
+      dependencies: [ "configure_vms" ]
+    - task_id: "docker_installation"
+      type: "AnsibleTask"
+      playbook: "./playbooks/docker_install.yml"
+      inventory: "./inventories/inventory_updates.ini"
+      dependencies: [ "k3s_installation" ]
+    - task_id: "openfaas_installation"
+      type: "AnsibleTask"
+      playbook: "./playbooks/install_openfaas.yml"
+      inventory: "./inventories/inventory_updates.ini"
+      dependencies: [ "docker_installation" ]
+    - task_id: "final_message"
+      type: "PrintTask"
+      params:
+        message: "Full pipeline completed"
+      dependencies: ["run_add_rules_ansible"]
