@@ -1,0 +1,13 @@
+dag:
+  name: "esempio_dag"
+  tasks:
+    - task_id: "run_add_rules_ansible"
+      type: "AnsibleTask"
+      playbook: "./playbooks/remove_nat_rules.yml"
+      inventory: "./inventories/inventory-nat-rules.ini"
+      dependencies: []
+    - task_id: "task_3"
+      type: "PrintTask"
+      params:
+        message: "Fine pipeline"
+      dependencies: ["run_add_rules_ansible"]

@@ -28,11 +28,8 @@ jobs:
 
     - name: Install dependencies and Run tests
       run: |
-        uv venv
-        source .venv/bin/activate
-        uv pip install .
-        uv pip install .[test]
-        pytest
+        uv sync --extra test
+        uv run pytest tests/
 
   release:
     needs: test # This job depends on the 'test' job passing

@@ -4,12 +4,11 @@ from rich import print
 from rich.live import Live
 import time
 import threading
-from rich.console import Console
 import functools
 
 from maestro.core.dag import DAG
 from maestro.core.orchestrator import Orchestrator
-from maestro.cli_modern import StatusManager, ProgressTracker, DisplayManager
+from maestro.utils.legacy_ui import StatusManager, ProgressTracker, DisplayManager
 
 app = typer.Typer()
 
@@ -32,7 +31,6 @@ def run(dag_file: str,
             status_manager = StatusManager(nx_dag)
             progress_tracker = ProgressTracker(len(dag.tasks))
             display_manager = DisplayManager(nx_dag, status_manager, progress_tracker)
-            orchestrator = Orchestrator() # Re-initialize orchestrator to use global console
 
             def status_update_callback():
                 live.update(display_manager.display())
@@ -40,10 +38,10 @@ def run(dag_file: str,
             with Live(screen=True, refresh_per_second=4) as live:
                 # Create a partial function with all arguments bound
                 run_dag_partial = functools.partial(orchestrator.run_dag,
-                                                    dag,
-                                                    status_manager,
-                                                    progress_tracker,
-                                                    status_update_callback)
+                                                    dag=dag,
+                                                    status_manager=status_manager,
+                                                    progress_tracker=progress_tracker,
+                                                    status_callback=status_update_callback)
 
                 # Run the orchestrator in a separate thread
                 orchestrator_thread = threading.Thread(target=run_dag_partial)

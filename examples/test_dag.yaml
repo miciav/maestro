@@ -1,0 +1,9 @@
+dag:
+  tasks:
+    - task_id: task1
+      type: print_task
+      message: "Hello from task1"
+    - task_id: task2
+      type: print_task
+      message: "Hello from task2"
+      dependencies: [task1]

@@ -5,7 +5,8 @@ from collections import deque
 from maestro.core.task import Task
 
 class DAG:
-    def __init__(self):
+    def __init__(self, dag_id: str = "default_dag"):
+        self.dag_id = dag_id
         self.tasks: Dict[str, Task] = {}
 
     def add_task(self, task: Task):
@@ -46,11 +47,3 @@ class DAG:
             raise ValueError("DAG has a cycle.")
 
         return execution_order
-
-    def execute(self):
-        execution_order = self.get_execution_order()
-        for task_id in execution_order:
-            task = self.tasks[task_id]
-            # In a real scenario, you would handle status updates and execution logic here
-            print(f"Executing task: {task.task_id}")
-            task.execute()

@@ -14,7 +14,7 @@ class AnsibleTask(BaseTask):
     playbook: str
     inventory: str
     private_data_dir: str = "./"
-    verbosity: int = 0
+    verbosity: int = 1
     extra_vars: Dict[str, Any] = Field(default_factory=dict)
     become_user: Optional[str] = None
 
@@ -53,7 +53,7 @@ class AnsibleTask(BaseTask):
             private_data_dir=data_dir,
             playbook=playbook_path,
             inventory=inventory_path,
-            quiet=True,
+            quiet=False,
             verbosity=self.verbosity
         )
 
