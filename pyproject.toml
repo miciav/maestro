@@ -1,6 +1,6 @@
 [project]
 name = "maestro"
-version = "0.0.4"
+version = "0.0.5"
 description = "A simple Python task orchestrator"
 requires-python = ">=3.8"
 dependencies = [
@@ -10,11 +10,15 @@ dependencies = [
     "rich",
     "ansible_runner>=2.3.1",
     "pydantic>=2.0",
-    "typer>=0.12.3"
+    "typer>=0.12.3",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "requests>=2.31.0"
 ]
 
 [project.scripts]
-maestro = "maestro.cli_concurrent:app"
+maestro = "maestro.cli_client:app"
+maestro-server = "maestro.server.app:start_server"
 
 [project.optional-dependencies]
 test = [

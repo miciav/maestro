@@ -1,0 +1,465 @@
+#!/usr/bin/env python3
+
+import typer
+import signal
+import sys
+import os
+from typing import Optional
+from rich.console import Console
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.panel import Panel
+from datetime import datetime
+import subprocess
+import time
+import threading
+
+from maestro.client.api_client import MaestroAPIClient
+
+app = typer.Typer(help="Maestro CLI Client - Communicate with Maestro REST API server")
+console = Console()
+
+# Global API client
+api_client = MaestroAPIClient()
+
+def check_server_connection():
+    """Check if the server is running and provide helpful feedback"""
+    if not api_client.is_server_running():
+        console.print("[red]Error: Maestro server is not running![/red]")
+        console.print()
+        console.print("To start the server, run:")
+        console.print("  [bold]maestro server start[/bold]")
+        console.print()
+        console.print("Or start it manually:")
+        console.print("  [bold]python -m maestro.server.app[/bold]")
+        raise typer.Exit(1)
+
+@app.command()
+def submit(
+    dag_file: str = typer.Argument(..., help="Path to the DAG YAML file"),
+    resume: bool = typer.Option(False, "--resume", help="Resume from last checkpoint"),
+    fail_fast: bool = typer.Option(True, "--fail-fast/--no-fail-fast", help="Stop on first failure"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Submit a DAG for execution"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    try:
+        # Convert relative path to absolute
+        dag_file_path = os.path.abspath(dag_file)
+        
+        if not os.path.exists(dag_file_path):
+            console.print(f"[red]Error: DAG file not found: {dag_file_path}[/red]")
+            raise typer.Exit(1)
+        
+        response = api_client.submit_dag(dag_file_path, resume, fail_fast)
+        
+        console.print(f"[bold green]✓ DAG submitted successfully![/bold green]")
+        console.print(f"[cyan]DAG ID:[/cyan] {response['dag_id']}")
+        console.print(f"[cyan]Execution ID:[/cyan] {response['execution_id']}")
+        console.print(f"[cyan]Status:[/cyan] [yellow]{response['status']}[/yellow]")
+        console.print(f"[cyan]Submitted at:[/cyan] {response['submitted_at']}")
+        console.print()
+        console.print("[bold blue]Available commands:[/bold blue]")
+        console.print(f"  • [bold]maestro status {response['dag_id']}[/bold] - Check DAG status")
+        console.print(f"  • [bold]maestro logs {response['dag_id']}[/bold] - View logs")
+        console.print(f"  • [bold]maestro attach {response['dag_id']}[/bold] - Attach to live log stream")
+        console.print(f"  • [bold]maestro cancel {response['dag_id']}[/bold] - Cancel execution")
+        console.print()
+        
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def status(
+    dag_id: str = typer.Argument(..., help="DAG ID to check status"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="Specific execution ID"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Show status of a DAG execution"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    try:
+        response = api_client.get_dag_status(dag_id, execution_id)
+        
+        # Main status table
+        table = Table(title=f"DAG Status: {dag_id}")
+        table.add_column("Property", style="cyan")
+        table.add_column("Value", style="magenta")
+        
+        table.add_row("Execution ID", response["execution_id"])
+        table.add_row("Status", response["status"])
+        table.add_row("Started", response["started_at"] or "N/A")
+        table.add_row("Completed", response["completed_at"] or "Running...")
+        table.add_row("Thread ID", response["thread_id"] or "N/A")
+        
+        console.print(table)
+        
+        # Tasks table
+        if response["tasks"]:
+            tasks_table = Table(title="Tasks")
+            tasks_table.add_column("Task ID", style="cyan")
+            tasks_table.add_column("Status", style="magenta")
+            tasks_table.add_column("Started", style="green")
+            tasks_table.add_column("Completed", style="yellow")
+            
+            for task in response["tasks"]:
+                status_style = {
+                    "completed": "green",
+                    "running": "yellow",
+                    "failed": "red",
+                    "pending": "blue"
+                }.get(task["status"], "white")
+                
+                tasks_table.add_row(
+                    task["task_id"],
+                    f"[{status_style}]{task['status']}[/{status_style}]",
+                    task.get("started_at", "N/A") or "N/A",
+                    task.get("completed_at", "N/A") or "N/A"
+                )
+            
+            console.print(tasks_table)
+        
+    except FileNotFoundError:
+        console.print(f"[red]DAG execution not found: {dag_id}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def logs(
+    dag_id: str = typer.Argument(..., help="DAG ID to get logs for"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="Specific execution ID"),
+    limit: int = typer.Option(100, "--limit", help="Number of log entries to show"),
+    task_filter: Optional[str] = typer.Option(None, "--task", help="Filter logs by task ID"),
+    level_filter: Optional[str] = typer.Option(None, "--level", help="Filter logs by level"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Show logs for a DAG execution"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    try:
+        response = api_client.get_dag_logs(dag_id, execution_id, limit, task_filter, level_filter)
+        
+        if not response["logs"]:
+            console.print(f"[yellow]No logs found for DAG: {dag_id}[/yellow]")
+            return
+        
+        console.print(f"[bold cyan]Logs: {dag_id}[/bold cyan]")
+        if execution_id:
+            console.print(f"[dim]Execution ID: {execution_id}[/dim]")
+        console.print(f"[dim]Showing {response['total_count']} log entries[/dim]")
+        console.print()
+        
+        for log in reversed(response["logs"]):
+            level_style = {
+                "ERROR": "red",
+                "WARNING": "yellow",
+                "INFO": "green",
+                "DEBUG": "blue"
+            }.get(log["level"], "white")
+            
+            timestamp = log["timestamp"].split("T")[1].split(".")[0] if "T" in log["timestamp"] else log["timestamp"]
+            
+            console.print(f"[dim]{timestamp}[/dim] [{level_style}]{log['level']}[/{level_style}] [magenta]{log['task_id']}[/magenta]: {log['message']}")
+        
+        console.print()
+        console.print(f"[dim]💡 Tip: Use 'maestro attach {dag_id}' for live log streaming[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def attach(
+    dag_id: str = typer.Argument(..., help="DAG ID to attach logs for"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="Specific execution ID"),
+    task_filter: Optional[str] = typer.Option(None, "--task", help="Filter logs by task ID"),
+    level_filter: Optional[str] = typer.Option(None, "--level", help="Filter logs by level"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Attach to live log stream for a DAG execution"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    def handle_exit(signum, frame):
+        console.print("\\n[yellow]Detached from log stream[/yellow]")
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
+    
+    console.print(f"[bold cyan]Attaching to live logs for DAG: {dag_id}[/bold cyan]")
+    if execution_id:
+        console.print(f"[dim]Execution ID: {execution_id}[/dim]")
+    console.print(f"[dim]Press Ctrl+C to detach[/dim]\\n")
+    
+    try:
+        for log in api_client.stream_dag_logs(dag_id, execution_id, task_filter, level_filter):
+            if "error" in log:
+                console.print(f"[red]Stream error: {log['error']}[/red]")
+                break
+            
+            level_style = {
+                "ERROR": "red",
+                "WARNING": "yellow",
+                "INFO": "green",
+                "DEBUG": "blue"
+            }.get(log["level"], "white")
+            
+            timestamp = log["timestamp"].split("T")[1].split(".")[0] if "T" in log["timestamp"] else log["timestamp"]
+            
+            console.print(f"[dim]{timestamp}[/dim] [{level_style}]{log['level']}[/{level_style}] [magenta]{log['task_id']}[/magenta]: {log['message']}")
+    
+    except KeyboardInterrupt:
+        console.print("\\n[yellow]Detached from log stream[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def running(
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Show all currently running DAGs"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    try:
+        response = api_client.get_running_dags()
+        
+        if not response["running_dags"]:
+            console.print("[yellow]No running DAGs found[/yellow]")
+            return
+        
+        table = Table(title="Running DAGs")
+        table.add_column("DAG ID", style="cyan")
+        table.add_column("Execution ID", style="magenta")
+        table.add_column("Started", style="green")
+        table.add_column("Thread ID", style="yellow")
+        
+        for dag in response["running_dags"]:
+            table.add_row(
+                dag["dag_id"],
+                dag["execution_id"][:8] + "..." if dag["execution_id"] else "N/A",
+                dag["started_at"],
+                str(dag["thread_id"])
+            )
+        
+        console.print(table)
+        console.print(f"\\n[dim]Total running DAGs: {response['count']}[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def cancel(
+    dag_id: str = typer.Argument(..., help="DAG ID to cancel"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="Specific execution ID"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Cancel a running DAG execution"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    try:
+        response = api_client.cancel_dag(dag_id, execution_id)
+        
+        if response["success"]:
+            console.print(f"[green]{response['message']}[/green]")
+        else:
+            console.print(f"[yellow]{response['message']}[/yellow]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def validate(
+    dag_file: str = typer.Argument(..., help="Path to the DAG YAML file"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Validate a DAG file"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    try:
+        dag_file_path = os.path.abspath(dag_file)
+        
+        if not os.path.exists(dag_file_path):
+            console.print(f"[red]Error: DAG file not found: {dag_file_path}[/red]")
+            raise typer.Exit(1)
+        
+        response = api_client.validate_dag(dag_file_path)
+        
+        if response["valid"]:
+            console.print(f"[bold green]✓ DAG is valid:[/bold green] {response['dag_id']}")
+            
+            # Show DAG structure
+            table = Table(title="DAG Structure")
+            table.add_column("Task ID", style="cyan")
+            table.add_column("Type", style="magenta")
+            table.add_column("Dependencies", style="green")
+            
+            for task in response["tasks"]:
+                deps = ", ".join(task["dependencies"]) if task["dependencies"] else "None"
+                table.add_row(task["task_id"], task["type"], deps)
+            
+            console.print(table)
+            console.print(f"\\n[dim]Total tasks: {response['total_tasks']}[/dim]")
+        else:
+            console.print(f"[bold red]✗ DAG validation failed:[/bold red] {response['error']}")
+            raise typer.Exit(1)
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def cleanup(
+    days: int = typer.Option(30, "--days", help="Days to keep (older executions will be deleted)"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Clean up old execution records"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    try:
+        response = api_client.cleanup_old_executions(days)
+        console.print(f"[green]{response['message']}[/green]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def list(
+    active: bool = typer.Option(False, "--active", "-a", help="Show only active/running DAGs"),
+    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status (running, completed, failed, cancelled)"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """List all DAGs with optional filtering"""
+    api_client.base_url = server_url
+    check_server_connection()
+    
+    try:
+        # If --active is specified, override status filter
+        if active:
+            status = "running"
+        
+        response = api_client.list_dags(status)
+        
+        if not response["dags"]:
+            if status:
+                console.print(f"[yellow]No DAGs found with status '{status}'[/yellow]")
+            else:
+                console.print("[yellow]No DAGs found[/yellow]")
+            return
+        
+        # Create table
+        table = Table(title=response["title"])
+        table.add_column("DAG ID", style="cyan")
+        table.add_column("Execution ID", style="blue")
+        table.add_column("Status", style="green")
+        table.add_column("Started", style="magenta")
+        table.add_column("Completed", style="yellow")
+        table.add_column("Thread ID", style="dim")
+        
+        for dag in response["dags"]:
+            status_style = {
+                "completed": "green",
+                "running": "yellow",
+                "failed": "red",
+                "cancelled": "orange1"
+            }.get(dag.get("status"), "white")
+            
+            table.add_row(
+                dag["dag_id"],
+                dag["execution_id"][:8] + "..." if dag["execution_id"] else "N/A",
+                f"[{status_style}]{dag.get('status', 'N/A')}[/{status_style}]",
+                dag.get("started_at", "N/A"),
+                dag.get("completed_at", "N/A") or "Running...",
+                str(dag.get("thread_id", "N/A"))
+            )
+        
+        console.print(table)
+        console.print(f"\n[dim]Total DAGs: {response['count']}[/dim]")
+        
+        # Show helpful tips
+        if not status:
+            console.print("\n[dim]💡 Tips:[/dim]")
+            console.print("[dim]  • Use --active or -a to show only running DAGs[/dim]")
+            console.print("[dim]  • Use --status to filter by specific status[/dim]")
+            console.print("[dim]  • Available statuses: running, completed, failed, cancelled[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+# Create server subcommand group
+server = typer.Typer(help="Server management commands")
+app.add_typer(server, name="server")
+
+@server.command("start")
+def start_server(
+    host: str = typer.Option("0.0.0.0", "--host", help="Server host"),
+    port: int = typer.Option(8000, "--port", help="Server port"),
+    log_level: str = typer.Option("info", "--log-level", help="Log level"),
+    daemon: bool = typer.Option(False, "--daemon", help="Run as daemon")
+):
+    """Start the Maestro API server"""
+    if daemon:
+        # Run server as daemon
+        cmd = [
+            sys.executable, "-m", "maestro.server.app",
+            "--host", host,
+            "--port", str(port),
+            "--log-level", log_level
+        ]
+        
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Wait for server to start
+        api_client.base_url = f"http://{host}:{port}"
+        if api_client.wait_for_server(30):
+            console.print(f"[green]Maestro server started on {host}:{port}[/green]")
+        else:
+            console.print("[red]Failed to start server[/red]")
+            raise typer.Exit(1)
+    else:
+        # Run server in foreground
+        from maestro.server.app import start_server
+        console.print(f"[green]Starting Maestro server on {host}:{port}[/green]")
+        start_server(host, port, log_level)
+
+@server.command("stop")
+def stop_server():
+    """Stop the Maestro API server"""
+    # This would need to be implemented with proper process management
+    console.print("[yellow]Server stop command not implemented yet[/yellow]")
+    console.print("[yellow]Please stop the server manually (Ctrl+C)[/yellow]")
+
+@server.command("status")
+def server_status(
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Check server status"""
+    api_client.base_url = server_url
+    
+    try:
+        response = api_client.health_check()
+        console.print(f"[green]Server is running at {server_url}[/green]")
+        console.print(f"[dim]Status: {response['status']}[/dim]")
+        console.print(f"[dim]Timestamp: {response['timestamp']}[/dim]")
+    except (ConnectionError, TimeoutError):
+        console.print(f"[red]Server is not running at {server_url}[/red]")
+        raise typer.Exit(1)
+
+if __name__ == "__main__":
+    app()
