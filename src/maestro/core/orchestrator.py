@@ -1,4 +1,7 @@
 import logging
+import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Type, Dict, Optional
 
 from rich import get_console
@@ -22,6 +25,8 @@ class Orchestrator:
         self.executor_factory = ExecutorFactory()
         self._setup_logging(log_level)
 
+        self.executor = ThreadPoolExecutor(max_workers=10)
+
     def _setup_logging(self, log_level: str):
         """Setup logging with Rich handler."""
         logging.basicConfig(
@@ -39,6 +44,35 @@ class Orchestrator:
     def load_dag_from_file(self, filepath: str) -> DAG:
         """Load and validate DAG from YAML file."""
         return self.dag_loader.load_dag_from_file(filepath)
+
+    def run_dag_in_thread(
+        self, 
+        dag: DAG, 
+        resume: bool = False, 
+        fail_fast: bool = True,
+        status_callback=None
+    ) -> str:
+        """Execute DAG in a separate thread with concurrency."""
+        execution_id = str(uuid.uuid4())
+        
+        # Create execution record in database
+        with self.status_manager as sm:
+            sm.create_dag_execution(dag.dag_id, execution_id)
+        
+        def execute():
+            try:
+                self.run_dag(dag, resume=resume, fail_fast=fail_fast, status_callback=status_callback)
+                with self.status_manager as sm:
+                    sm.update_dag_execution_status(dag.dag_id, execution_id, "completed")
+            except Exception as e:
+                with self.status_manager as sm:
+                    sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
+                self.logger.error(f"DAG {dag.dag_id} execution failed: {e}")
+                if fail_fast:
+                    raise
+
+        self.executor.submit(execute)
+        return execution_id
 
     def run_dag(
         self, 

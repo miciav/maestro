@@ -10,10 +10,13 @@ Maestro is a simple Python task orchestrator that runs a series of tasks defined
 ## Features
 
 - **DAG-based task execution:** Define complex workflows with dependencies.
+- **Multi-threaded execution:** Run DAGs asynchronously with concurrent task execution.
+- **Database persistence:** Track execution history and status with SQLite database.
+- **Real-time monitoring:** Monitor DAG execution progress with rich UI.
 - **YAML configuration:** Easily define your DAGs in a human-readable format.
 - **Extensible:** Create your own custom task types.
-- **CLI interface:** Run, validate, and visualize your DAGs from the command line.
-- **Real-time updates:** (Coming soon) Get real-time updates on task status.
+- **Enhanced CLI interface:** Comprehensive command-line interface with monitoring and management.
+- **Execution lifecycle management:** Start, monitor, cancel, and cleanup DAG executions.
 
 ## Installation
 
@@ -31,28 +34,90 @@ uv pip install -e .
 
 ## Usage
 
-### Running a DAG
+### Basic Commands
+
+#### Running a DAG
 
 ```bash
-uv run -m maestro.cli run examples/sample_dag.yaml
+# Run a DAG asynchronously (default)
+maestro run examples/sample_dag.yaml
+
+# Run a DAG in the background
+maestro run-async examples/sample_dag.yaml
 ```
 
-### Validating a DAG
+#### Validating a DAG
 
 ```bash
-uv run -m maestro.cli validate examples/sample_dag.yaml
+maestro validate examples/sample_dag.yaml
 ```
 
-### Visualizing a DAG
+#### Visualizing a DAG
 
 ```bash
-uv run -m maestro.cli visualize examples/sample_dag.yaml
+maestro visualize examples/sample_dag.yaml
 ```
 
-### Getting DAG Status
+### Monitoring and Management
+
+#### Monitor DAG execution in real-time
 
 ```bash
-uv run -m maestro.cli status examples/sample_dag.yaml
+maestro monitor my_dag_id
+```
+
+#### Check DAG status
+
+```bash
+# Show all running DAGs
+maestro status
+
+# Show specific DAG status
+maestro status my_dag_id
+```
+
+#### View execution logs
+
+```bash
+maestro logs my_dag_id
+```
+
+#### List all DAGs
+
+```bash
+# List all DAGs
+maestro list-dags
+
+# Filter by status
+maestro list-dags --status running
+```
+
+#### View execution history
+
+```bash
+maestro history my_dag_id
+```
+
+#### Get summary statistics
+
+```bash
+maestro summary
+```
+
+#### Cancel running DAG
+
+```bash
+maestro cancel my_dag_id
+```
+
+#### Cleanup old records
+
+```bash
+# Clean up records older than 30 days
+maestro cleanup --days 30
+
+# Dry run to see what would be deleted
+maestro cleanup --days 30 --dry-run
 ```
 
 ## Configuration

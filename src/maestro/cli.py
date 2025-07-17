@@ -3,7 +3,6 @@ import typer
 from rich import print
 from rich.live import Live
 import time
-import threading
 import functools
 
 from maestro.core.dag import DAG
@@ -36,28 +35,25 @@ def run(dag_file: str,
                 live.update(display_manager.display())
 
             with Live(screen=True, refresh_per_second=4) as live:
-                # Create a partial function with all arguments bound
-                run_dag_partial = functools.partial(orchestrator.run_dag,
-                                                    dag=dag,
-                                                    status_manager=status_manager,
-                                                    progress_tracker=progress_tracker,
-                                                    status_callback=status_update_callback)
+                # Run the orchestrator with modern UI in a separate thread
+                execution_id = orchestrator.run_dag_in_thread(
+                    dag=dag,
+                    status_callback=status_update_callback
+                )
 
-                # Run the orchestrator in a separate thread
-                orchestrator_thread = threading.Thread(target=run_dag_partial)
-                orchestrator_thread.start()
-
-                # Keep the main thread alive to update the display
-                while orchestrator_thread.is_alive():
-                    time.sleep(0.1) # Small delay to prevent busy-waiting
+                # Monitoring thread
+                while True:
                     live.update(display_manager.display())
+                    time.sleep(0.1) # Serve UI updates
+                    with orchestrator.status_manager as sm:
+                        execution_details = sm.get_dag_execution_details(dag.dag_id, execution_id)
+                    if execution_details.get("status") in ("completed", "failed"):
+                        break
 
-                orchestrator_thread.join() # Wait for the orchestrator thread to finish
-
-            print("[bold green]DAG execution finished.[/bold green]")
+            print(f"[bold green]DAG execution finished with status: {execution_details.get('status')}[/bold green]")
         else:
-            orchestrator.run_dag(dag) # Run without modern UI
-            print("[bold green]DAG execution finished.[/bold green]") # Standard console output
+            execution_id = orchestrator.run_dag_in_thread(dag)
+            print(f"[bold green]DAG execution started with ID: {execution_id}.[/bold green]")
     except Exception as e:
         print(f"[bold red]Error: {e}[/bold red]")
 

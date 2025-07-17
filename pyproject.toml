@@ -1,6 +1,6 @@
 [project]
 name = "maestro"
-version = "0.0.3"
+version = "0.0.4"
 description = "A simple Python task orchestrator"
 requires-python = ">=3.8"
 dependencies = [
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-maestro = "maestro.cli:app"
+maestro = "maestro.cli_concurrent:app"
 
 [project.optional-dependencies]
 test = [

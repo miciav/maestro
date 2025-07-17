@@ -47,9 +47,9 @@ class ExtendedTerraformTask(TerraformTask):
     """
     workflow_mode: bool = False
 
-    def execute(self):
+    def execute_local(self):
         """
-        Executes the Terraform operation.
+        Executes the Terraform operation locally.
         If workflow_mode is True, it runs the full Terraform workflow.
         Otherwise, it runs the specified command using the original logic.
         """
@@ -60,7 +60,7 @@ class ExtendedTerraformTask(TerraformTask):
         elif self.command:
             # Call the original execute method for single commands
             print(f"[ExtendedTerraformTask] Executing single Terraform command '{self.command}' for '{self.task_id}'.")
-            super().execute()
+            super().execute_local()
             print(f"[ExtendedTerraformTask] Single command for '{self.task_id}' completed successfully.")
         else:
             raise ValueError("For ExtendedTerraformTask, either 'workflow_mode' must be true or a 'command' must be provided.")

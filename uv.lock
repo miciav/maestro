@@ -148,7 +148,7 @@ wheels = [
 
 [[package]]
 name = "maestro"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "ansible-runner", version = "2.3.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
