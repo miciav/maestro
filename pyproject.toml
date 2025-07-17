@@ -1,6 +1,6 @@
 [project]
 name = "maestro"
-version = "0.0.2"
+version = "0.0.3"
 description = "A simple Python task orchestrator"
 requires-python = ">=3.8"
 dependencies = [
@@ -8,7 +8,9 @@ dependencies = [
     "pyyaml>=6.0",
     "networkx>=3.1",
     "rich",
-    "ansible_runner>=2.3.1"
+    "ansible_runner>=2.3.1",
+    "pydantic>=2.0",
+    "typer>=0.12.3"
 ]
 
 [project.scripts]
@@ -19,3 +21,8 @@ test = [
     "pytest",
     "mypy"
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
