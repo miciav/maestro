@@ -1,0 +1,19 @@
+dag:
+  name: "scheduled_dag_example"
+  start_time: "2024-01-01T09:00:00"  # DAG will start at 9:00 AM on January 1st, 2024
+  tasks:
+    - task_id: "morning_task"
+      type: "PrintTask"
+      params:
+        message: "Good morning! This task runs at the scheduled time."
+      dependencies: []
+    - task_id: "followup_task"
+      type: "PrintTask"
+      params:
+        message: "This task runs after the morning task completes."
+      dependencies: ["morning_task"]
+    - task_id: "final_task"
+      type: "PrintTask"
+      params:
+        message: "Pipeline completed successfully!"
+      dependencies: ["followup_task"]

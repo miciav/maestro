@@ -1,4 +1,5 @@
 import time
+import logging
 from typing import Optional
 from rich import get_console
 
@@ -10,6 +11,7 @@ class PrintTask(BaseTask):
     delay: Optional[int] = 0
 
     def execute_local(self):
-        get_console().print(f"[PrintTask] {self.message}")
+        logger = logging.getLogger(__name__)
+        logger.info(f"[PrintTask] {self.message}")
         if self.delay:
             time.sleep(self.delay)

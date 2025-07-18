@@ -6,64 +6,82 @@ from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 class StatusManager:
+    _tables_initialized = {}  # Class-level cache to track initialized databases
+    
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._conn = None
         self._lock = threading.RLock()  # Reentrant lock for thread safety
+        self._initialize_tables_once()
+
+    def _initialize_tables_once(self):
+        """Initialize tables only once per database file."""
+        if self.db_path not in StatusManager._tables_initialized:
+            with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode for better concurrency
+                self._create_tables_in_connection(conn)
+            StatusManager._tables_initialized[self.db_path] = True
 
     def __enter__(self):
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode for better concurrency
-        self._create_tables()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._conn:
             self._conn.close()
 
+    def _create_tables_in_connection(self, conn):
+        """Create tables in the provided connection."""
+        # Create new enhanced task status table with timestamps
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS task_status (
+                dag_id TEXT,
+                task_id TEXT,
+                status TEXT,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                thread_id TEXT,
+                PRIMARY KEY (dag_id, task_id)
+            )
+        """)
+        
+        # DAG execution tracking table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dag_executions (
+                dag_id TEXT,
+                execution_id TEXT,
+                status TEXT,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                thread_id TEXT,
+                pid INTEGER,
+                PRIMARY KEY (dag_id, execution_id)
+            )
+        """)
+        
+        # DAG execution logs table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS execution_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dag_id TEXT,
+                execution_id TEXT,
+                task_id TEXT,
+                level TEXT,
+                message TEXT,
+                timestamp TIMESTAMP,
+                thread_id TEXT
+            )
+        """)
+        
+        # Commit the changes
+        conn.commit()
+    
     def _create_tables(self):
+        """Legacy method kept for compatibility."""
         with self._lock:
             with self._conn:
-                # Create new enhanced task status table with timestamps
-                self._conn.execute("""
-                    CREATE TABLE IF NOT EXISTS task_status (
-                        dag_id TEXT,
-                        task_id TEXT,
-                        status TEXT,
-                        started_at TIMESTAMP,
-                        completed_at TIMESTAMP,
-                        thread_id TEXT,
-                        PRIMARY KEY (dag_id, task_id)
-                    )
-                """)
-                
-                # DAG execution tracking table
-                self._conn.execute("""
-                    CREATE TABLE IF NOT EXISTS dag_executions (
-                        dag_id TEXT,
-                        execution_id TEXT,
-                        status TEXT,
-                        started_at TIMESTAMP,
-                        completed_at TIMESTAMP,
-                        thread_id TEXT,
-                        pid INTEGER,
-                        PRIMARY KEY (dag_id, execution_id)
-                    )
-                """)
-                
-                # DAG execution logs table
-                self._conn.execute("""
-                    CREATE TABLE IF NOT EXISTS execution_logs (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        dag_id TEXT,
-                        execution_id TEXT,
-                        task_id TEXT,
-                        level TEXT,
-                        message TEXT,
-                        timestamp TIMESTAMP,
-                        thread_id TEXT
-                    )
-                """)
+                self._create_tables_in_connection(self._conn)
 
     def set_task_status(self, dag_id: str, task_id: str, status: str, execution_id: str = None):
         """Set task status with thread safety and timestamp tracking."""

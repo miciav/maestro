@@ -362,7 +362,7 @@ def start_server(host: str = "0.0.0.0", port: int = 8000, log_level: str = "info
     """Start the Maestro API server"""
     uvicorn.run(app, host=host, port=port, log_level=log_level)
 
-if __name__ == "__main__":
+def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Maestro API Server")
@@ -372,3 +372,6 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     start_server(args.host, args.port, args.log_level)
+
+if __name__ == "__main__":
+    main()

@@ -7,8 +7,11 @@ from rich.table import Table
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.text import Text
 import time
 import threading
+import signal
+import sys
 from datetime import datetime, timedelta
 
 from maestro.core.orchestrator import Orchestrator
@@ -16,6 +19,81 @@ from maestro.core.status_manager import StatusManager
 
 app = typer.Typer(help="Maestro - Multi-threaded DAG execution orchestrator")
 console = Console()
+
+@app.command()
+def attach(
+    dag_id: str = typer.Argument(..., help="DAG ID to attach logs for"),
+    execution_id: Optional[str] = typer.Option(None, "--execution-id", help="Specific execution ID to attach"),
+    task_filter: Optional[str] = typer.Option(None, "--task", help="Filter logs by task ID"),
+    level_filter: Optional[str] = typer.Option(None, "--level", help="Filter logs by level (DEBUG, INFO, WARNING, ERROR)"),
+    db_path: str = typer.Option("maestro.db", "--db", help="Database path")
+):
+    """Attach to execution logs for a running DAG."""
+    orchestrator = Orchestrator(db_path=db_path)
+
+    def handle_exit(signum, frame):
+        console.print("\n[yellow]Detachment successful. Returning to CLI.[/yellow]")
+        sys.exit(0)
+
+    # Bind the signals for detachment
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
+
+    console.print(f"[bold cyan]Attaching to live logs for DAG: {dag_id}[/bold cyan]")
+    if execution_id:
+        console.print(f"[dim]Execution ID: {execution_id}[/dim]")
+    console.print(f"[dim]Press Ctrl+C to detach and return to CLI[/dim]\n")
+
+    last_timestamp = None
+    displayed_logs = set()  # Track displayed log entries to avoid duplicates
+
+    try:
+        while True:
+            with orchestrator.status_manager as sm:
+                logs = sm.get_execution_logs(dag_id, execution_id, limit=100)
+
+                # Apply filters
+                if task_filter:
+                    logs = [log for log in logs if log["task_id"] == task_filter]
+                if level_filter:
+                    logs = [log for log in logs if log["level"].upper() == level_filter.upper()]
+
+                # Filter for new logs only
+                new_logs = []
+                for log in logs:
+                    # Create a unique identifier for each log entry
+                    log_id = f"{log['timestamp']}_{log['task_id']}_{log['level']}_{log['message'][:50]}"
+                    
+                    if log_id not in displayed_logs:
+                        if last_timestamp is None or log["timestamp"] > last_timestamp:
+                            new_logs.append(log)
+                            displayed_logs.add(log_id)
+                            last_timestamp = log["timestamp"]
+
+                # Display new logs in chronological order (oldest first)
+                if new_logs:
+                    for log in reversed(new_logs):  # Reverse because logs come in DESC order
+                        level_style = {
+                            "ERROR": "red",
+                            "WARNING": "yellow",
+                            "INFO": "green",
+                            "DEBUG": "blue"
+                        }.get(log["level"], "white")
+
+                        timestamp = log["timestamp"].split("T")[1].split(".")[0] if "T" in log["timestamp"] else log["timestamp"]
+                        task_id = log["task_id"] or "system"
+
+                        console.print(f"[dim]{timestamp}[/dim] [{level_style}]{log['level']}[/{level_style}] [magenta]{task_id}[/magenta]: {log['message']}")
+
+                # Clean up displayed_logs set to prevent memory issues
+                if len(displayed_logs) > 1000:
+                    displayed_logs.clear()
+                    last_timestamp = None
+
+                time.sleep(1)  # Check for new logs every second
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
 
 @app.command()
 def run_async(
@@ -26,11 +104,15 @@ def run_async(
     log_level: str = typer.Option("INFO", "--log-level", help="Log level")
 ):
     """Run a DAG asynchronously in a separate thread."""
+    # Set log level to INFO for async operations but disable rich handler
     orchestrator = Orchestrator(log_level=log_level, db_path=db_path)
     
     try:
         dag = orchestrator.load_dag_from_file(dag_file)
         console.print(f"[bold green]Loading DAG:[/bold green] {dag.dag_id}")
+        
+        # Disable rich logging for async execution
+        orchestrator.disable_rich_logging()
         
         # Start DAG execution in background thread
         execution_id = orchestrator.run_dag_in_thread(
@@ -39,9 +121,24 @@ def run_async(
             fail_fast=fail_fast
         )
         
-        console.print(f"[bold green]DAG started with execution ID:[/bold green] {execution_id}")
-        console.print(f"[bold blue]Use 'maestro status {dag.dag_id}' to monitor progress[/bold blue]")
-        
+        # Enhanced confirmation message with essential information
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        console.print()
+        console.print("[bold green]✓ DAG submitted successfully![/bold green]")
+        console.print(f"[cyan]DAG ID:[/cyan] {dag.dag_id}")
+        console.print(f"[cyan]Execution ID:[/cyan] {execution_id}")
+        console.print(f"[cyan]Status:[/cyan] [yellow]running[/yellow]")
+        console.print(f"[cyan]Submitted at:[/cyan] {current_time}")
+        console.print()
+        console.print("[bold blue]Available commands:[/bold blue]")
+        console.print(f"  • [bold]maestro status {dag.dag_id}[/bold] - Check DAG status")
+        console.print(f"  • [bold]maestro logs {dag.dag_id}[/bold] - View historical logs")
+        console.print(f"  • [bold]maestro attach {dag.dag_id}[/bold] - Attach to live log stream")
+        console.print(f"  • [bold]maestro monitor {dag.dag_id}[/bold] - Monitor execution progress")
+        console.print()
+
+        return  # Return immediately to prevent waiting on the thread execution
+
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(1)
@@ -123,15 +220,9 @@ def monitor(
             while True:
                 time.sleep(refresh_interval)
                 live.update(create_status_display())
-                
-                # Check if execution is complete
-                with orchestrator.status_manager as sm:
-                    exec_details = sm.get_dag_execution_details(dag_id, execution_id)
-                    if exec_details.get("status") in ["completed", "failed"]:
-                        break
-                        
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Monitoring stopped[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
 @app.command()
 def status(
@@ -217,10 +308,18 @@ def logs(
     dag_id: str = typer.Argument(..., help="DAG ID to get logs for"),
     execution_id: Optional[str] = typer.Option(None, "--execution-id", help="Specific execution ID"),
     limit: int = typer.Option(100, "--limit", help="Number of log entries to show"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output in real-time"),
+    task_filter: Optional[str] = typer.Option(None, "--task", help="Filter logs by task ID"),
+    level_filter: Optional[str] = typer.Option(None, "--level", help="Filter logs by level (DEBUG, INFO, WARNING, ERROR)"),
     db_path: str = typer.Option("maestro.db", "--db", help="Database path")
 ):
-    """Show execution logs for a DAG."""
+    """Show execution logs for a DAG with optional real-time following."""
     orchestrator = Orchestrator(db_path=db_path)
+    
+    if follow:
+        # Use the new attach command for live streaming
+        console.print(f"[yellow]Note: Using --follow is equivalent to 'maestro attach {dag_id}'[/yellow]")
+        return attach(dag_id, execution_id, task_filter, level_filter, db_path)
     
     try:
         with orchestrator.status_manager as sm:
@@ -230,12 +329,22 @@ def logs(
                 console.print(f"[yellow]No logs found for DAG: {dag_id}[/yellow]")
                 return
             
-            table = Table(title=f"Execution Logs: {dag_id}")
-            table.add_column("Timestamp", style="cyan")
-            table.add_column("Task ID", style="magenta")
-            table.add_column("Level", style="green")
-            table.add_column("Message", style="white")
-            table.add_column("Thread ID", style="yellow")
+            # Apply filters
+            if task_filter:
+                logs = [log for log in logs if log["task_id"] == task_filter]
+            if level_filter:
+                logs = [log for log in logs if log["level"].upper() == level_filter.upper()]
+            
+            if not logs:
+                console.print(f"[yellow]No logs found matching the specified filters[/yellow]")
+                return
+            
+            # Enhanced display with better formatting
+            console.print(f"[bold cyan]Historical Logs: {dag_id}[/bold cyan]")
+            if execution_id:
+                console.print(f"[dim]Execution ID: {execution_id}[/dim]")
+            console.print(f"[dim]Showing {len(logs)} log entries[/dim]")
+            console.print()
             
             for log in reversed(logs):  # Show newest first
                 level_style = {
@@ -245,15 +354,13 @@ def logs(
                     "DEBUG": "blue"
                 }.get(log["level"], "white")
                 
-                table.add_row(
-                    log["timestamp"],
-                    log["task_id"] or "N/A",
-                    f"[{level_style}]{log['level']}[/{level_style}]",
-                    log["message"],
-                    str(log["thread_id"])
-                )
+                timestamp = log["timestamp"].split("T")[1].split(".")[0] if "T" in log["timestamp"] else log["timestamp"]
+                task_id = log["task_id"] or "system"
+                
+                console.print(f"[dim]{timestamp}[/dim] [{level_style}]{log['level']}[/{level_style}] [magenta]{task_id}[/magenta]: {log['message']}")
             
-            console.print(table)
+            console.print()
+            console.print(f"[dim]💡 Tip: Use 'maestro attach {dag_id}' for live log streaming[/dim]")
             
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")

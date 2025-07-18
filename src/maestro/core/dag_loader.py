@@ -1,6 +1,7 @@
 import yaml
 from typing import Dict, Any, Type, Optional
 from pathlib import Path
+from datetime import datetime
 from pydantic import BaseModel, ValidationError
 
 from maestro.core.dag import DAG
@@ -36,7 +37,24 @@ class DAGLoader:
         except FileNotFoundError:
             raise FileNotFoundError(f"DAG file not found: {filepath}")
 
-        dag = DAG(dag_id=dag_id)
+        # Extract scheduling configuration
+        start_time = None
+        cron_schedule = None
+        
+        if "start_time" in config.dag and "cron_schedule" in config.dag:
+            raise ValueError("Cannot specify both start_time and cron_schedule")
+        
+        if "start_time" in config.dag:
+            start_time_str = config.dag["start_time"]
+            try:
+                start_time = self._parse_datetime(start_time_str)
+            except ValueError as e:
+                raise ValueError(f"Invalid start_time format: {e}")
+        
+        if "cron_schedule" in config.dag:
+            cron_schedule = config.dag["cron_schedule"]
+        
+        dag = DAG(dag_id=dag_id, start_time=start_time, cron_schedule=cron_schedule)
         dag_config = config.dag
 
         # Validate required fields
@@ -85,3 +103,23 @@ class DAGLoader:
             return task_class(**task_config)
         except Exception as e:
             raise ValueError(f"Error instantiating {task_type_name}: {e}")
+    
+    def _parse_datetime(self, datetime_str: str) -> datetime:
+        """Parse datetime string in various formats."""
+        # Common datetime formats to try
+        formats = [
+            "%Y-%m-%d %H:%M:%S",    # 2023-12-25 14:30:00
+            "%Y-%m-%dT%H:%M:%S",    # 2023-12-25T14:30:00 (ISO format)
+            "%Y-%m-%dT%H:%M:%SZ",   # 2023-12-25T14:30:00Z (UTC)
+            "%Y-%m-%d %H:%M",       # 2023-12-25 14:30
+            "%Y-%m-%dT%H:%M",       # 2023-12-25T14:30
+            "%Y-%m-%d",             # 2023-12-25 (assumes 00:00:00)
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(datetime_str, fmt)
+            except ValueError:
+                continue
+        
+        raise ValueError(f"Unable to parse datetime string '{datetime_str}'. Supported formats: {formats}")

@@ -1,0 +1,19 @@
+dag:
+  name: "cron_scheduled_dag"
+  cron_schedule: "0 9 * * *"  # Every day at 9:00 AM
+  tasks:
+    - task_id: "daily_report"
+      type: "PrintTask"
+      params:
+        message: "Generating daily report at 9:00 AM"
+      dependencies: []
+    - task_id: "send_email"
+      type: "PrintTask"
+      params:
+        message: "Sending daily report email"
+      dependencies: ["daily_report"]
+    - task_id: "cleanup"
+      type: "PrintTask"
+      params:
+        message: "Cleaning up temporary files"
+      dependencies: ["send_email"]

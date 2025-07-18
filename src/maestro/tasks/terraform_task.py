@@ -2,6 +2,7 @@ from .base import BaseTask
 import subprocess
 import os
 import shutil
+import logging
 from typing import Optional, Dict, Any
 from pydantic import Field
 from pathlib import Path
@@ -46,11 +47,12 @@ class TerraformTask(BaseTask):
 
     def _find_tf_command(self):
         """Determines whether to use 'tofu' or 'terraform'."""
+        logger = logging.getLogger(__name__)
         if shutil.which("tofu"):
-            print("[TerraformTask] Using 'tofu' command.")
+            logger.info("[TerraformTask] Using 'tofu' command.")
             return "tofu"
         elif shutil.which("terraform"):
-            print("[TerraformTask] Using 'terraform' command.")
+            logger.info("[TerraformTask] Using 'terraform' command.")
             return "terraform"
         else:
             raise FileNotFoundError("Neither 'tofu' nor 'terraform' command found in PATH.")
@@ -94,6 +96,7 @@ class TerraformTask(BaseTask):
 
     def run_subprocess(self, cmd):
         """Runs a subprocess command."""
+        logger = logging.getLogger(__name__)
         absolute_working_dir = self.get_absolute_working_dir()
 
         try:
@@ -104,20 +107,33 @@ class TerraformTask(BaseTask):
                 text=True,
                 check=True
             )
-            print(process.stdout)
+            # Log output instead of printing to stdout
+            if process.stdout:
+                for line in process.stdout.strip().split('\n'):
+                    if line.strip():
+                        logger.info(line)
             if process.stderr:
-                print(process.stderr)
+                for line in process.stderr.strip().split('\n'):
+                    if line.strip():
+                        logger.warning(line)
         except subprocess.CalledProcessError as e:
-            print(f"[TerraformTask] Error executing command: {' '.join(cmd)}")
-            print(f"[TerraformTask] Working directory: {absolute_working_dir}")
-            print(e.stdout)
-            print(e.stderr)
+            logger.error(f"[TerraformTask] Error executing command: {' '.join(cmd)}")
+            logger.error(f"[TerraformTask] Working directory: {absolute_working_dir}")
+            if e.stdout:
+                for line in e.stdout.strip().split('\n'):
+                    if line.strip():
+                        logger.error(line)
+            if e.stderr:
+                for line in e.stderr.strip().split('\n'):
+                    if line.strip():
+                        logger.error(line)
             raise
 
     def execute_local(self):
+        logger = logging.getLogger(__name__)
         absolute_working_dir = self.get_absolute_working_dir()
-        print(f"[TerraformTask] Executing '{self.task_id}'")
-        print(f"[TerraformTask] Working directory: {absolute_working_dir}")
+        logger.info(f"[TerraformTask] Executing '{self.task_id}'")
+        logger.info(f"[TerraformTask] Working directory: {absolute_working_dir}")
         cmd = self._build_command()
         self.run_subprocess(cmd)
-        print(f"[TerraformTask] Task '{self.task_id}' completed successfully.")
+        logger.info(f"[TerraformTask] Task '{self.task_id}' completed successfully.")

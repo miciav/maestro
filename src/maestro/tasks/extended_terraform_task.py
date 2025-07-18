@@ -17,20 +17,22 @@ PLAN_FILE = "tfplan" # This is used in lib/terraform.py
 TERRAFORM_DIR = "terraform-opentofu" # This is used in lib/terraform.py
 
 # Basic logging/printing functions (from lib/common.py)
+import logging
+
 def print_status(message):
-    print(f"[STATUS] {message}")
+    logging.getLogger(__name__).info(f"[STATUS] {message}")
 
 def print_success(message):
-    print(f"[SUCCESS] {message}")
+    logging.getLogger(__name__).info(f"[SUCCESS] {message}")
 
 def print_warning(message):
-    print(f"[WARNING] {message}")
+    logging.getLogger(__name__).warning(f"[WARNING] {message}")
 
 def print_error(message):
-    print(f"[ERROR] {message}")
+    logging.getLogger(__name__).error(f"[ERROR] {message}")
 
 def print_header(message):
-    print(f"=== {message} ===")
+    logging.getLogger(__name__).info(f"=== {message} ===")
 
 # check_command_exists (from lib/common.py)
 def check_command_exists(command):
@@ -53,15 +55,16 @@ class ExtendedTerraformTask(TerraformTask):
         If workflow_mode is True, it runs the full Terraform workflow.
         Otherwise, it runs the specified command using the original logic.
         """
+        logger = logging.getLogger(__name__)
         if self.workflow_mode:
-            print(f"[ExtendedTerraformTask] Executing full Terraform workflow for '{self.task_id}'.")
+            logger.info(f"[ExtendedTerraformTask] Executing full Terraform workflow for '{self.task_id}'.")
             self._run_full_workflow()
-            print(f"[ExtendedTerraformTask] Full workflow for '{self.task_id}' completed successfully.")
+            logger.info(f"[ExtendedTerraformTask] Full workflow for '{self.task_id}' completed successfully.")
         elif self.command:
             # Call the original execute method for single commands
-            print(f"[ExtendedTerraformTask] Executing single Terraform command '{self.command}' for '{self.task_id}'.")
+            logger.info(f"[ExtendedTerraformTask] Executing single Terraform command '{self.command}' for '{self.task_id}'.")
             super().execute_local()
-            print(f"[ExtendedTerraformTask] Single command for '{self.task_id}' completed successfully.")
+            logger.info(f"[ExtendedTerraformTask] Single command for '{self.task_id}' completed successfully.")
         else:
             raise ValueError("For ExtendedTerraformTask, either 'workflow_mode' must be true or a 'command' must be provided.")
 

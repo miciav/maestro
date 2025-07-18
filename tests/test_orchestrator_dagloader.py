@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime
 
 from maestro.core.orchestrator import Orchestrator
 from maestro.core.dag import DAG
@@ -49,6 +50,61 @@ dag:
       message: "Hello from task1"
 """
     f = tmp_path / "invalid_dag.yaml"
+    f.write_text(content)
+    return str(f)
+
+@pytest.fixture
+def dag_with_start_time_filepath(tmp_path):
+    content = """
+dag:
+  name: "scheduled_dag"
+  start_time: "2024-01-01T09:00:00"
+  tasks:
+    - task_id: task1
+      type: print_task
+      message: "Hello from scheduled task1"
+    - task_id: task2
+      type: print_task
+      message: "Hello from scheduled task2"
+      dependencies: [task1]
+"""
+    f = tmp_path / "scheduled_dag.yaml"
+    f.write_text(content)
+    return str(f)
+
+
+@pytest.fixture
+def dag_with_cron_schedule_filepath(tmp_path):
+    content = """
+dag:
+  name: "cron_scheduled_dag"
+  cron_schedule: "0 9 * * *"  # Every day at 9:00 AM
+  tasks:
+    - task_id: task1
+      type: print_task
+      message: "Hello from scheduled task1"
+    - task_id: task2
+      type: print_task
+      message: "Hello from scheduled task2"
+      dependencies: [task1]
+"""
+    f = tmp_path / "cron_scheduled_dag.yaml"
+    f.write_text(content)
+    return str(f)
+
+
+@pytest.fixture
+def dag_with_invalid_start_time_filepath(tmp_path):
+    content = """
+dag:
+  name: "invalid_scheduled_dag"
+  start_time: "invalid-date-format"
+  tasks:
+    - task_id: task1
+      type: print_task
+      message: "Hello from task1"
+"""
+    f = tmp_path / "invalid_scheduled_dag.yaml"
     f.write_text(content)
     return str(f)
 
@@ -129,4 +185,49 @@ dag:
 
     assert dag.tasks["failing_task"].status == TaskStatus.FAILED
     assert dag.tasks["subsequent_task"].status == TaskStatus.COMPLETED # Should have run
+
+def test_orchestrator_load_dag_with_start_time(orchestrator, dag_with_start_time_filepath):
+    """Test loading a DAG with start_time parameter from YAML file."""
+    dag = orchestrator.load_dag_from_file(dag_with_start_time_filepath)
+    
+    assert isinstance(dag, DAG)
+    assert dag.start_time is not None
+    assert dag.start_time == datetime(2024, 1, 1, 9, 0, 0)
+    assert "task1" in dag.tasks
+    assert "task2" in dag.tasks
+    assert dag.tasks["task2"].dependencies == ["task1"]
+
+def test_orchestrator_load_dag_with_invalid_start_time(orchestrator, dag_with_invalid_start_time_filepath):
+    """Test loading a DAG with invalid start_time format from YAML file."""
+    with pytest.raises(ValueError, match="Invalid start_time format"):
+        orchestrator.load_dag_from_file(dag_with_invalid_start_time_filepath)
+
+def test_orchestrator_load_dag_without_start_time(orchestrator, dag_filepath):
+    """Test loading a DAG without start_time parameter from YAML file."""
+    dag = orchestrator.load_dag_from_file(dag_filepath)
+    
+    assert isinstance(dag, DAG)
+    assert dag.start_time is None
+    assert dag.is_ready_to_start()  # Should be ready to start immediately
+    assert dag.time_until_start() is None
+
+def test_orchestrator_load_dag_with_cron_schedule(orchestrator, dag_with_cron_schedule_filepath):
+    """Test loading a DAG with cron schedule from YAML file."""
+    dag = orchestrator.load_dag_from_file(dag_with_cron_schedule_filepath)
+    
+    assert isinstance(dag, DAG)
+    assert dag.cron_schedule == "0 9 * * *"
+    assert dag.start_time is None
+    assert "task1" in dag.tasks
+    assert "task2" in dag.tasks
+    assert dag.tasks["task2"].dependencies == ["task1"]
+    
+    # Test schedule description
+    assert "Cron schedule" in dag.get_schedule_description()
+    
+    # Test next run time
+    next_run = dag.get_next_run_time()
+    assert next_run is not None
+    assert next_run.hour == 9
+    assert next_run.minute == 0
 

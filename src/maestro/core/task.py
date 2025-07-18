@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import List, Optional, Callable
 from pathlib import Path
+import logging
 
 from pydantic import BaseModel, Field
 from rich.console import Console

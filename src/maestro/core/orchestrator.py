@@ -16,6 +16,43 @@ from maestro.core.status_manager import StatusManager
 from maestro.core.executors.factory import ExecutorFactory
 
 
+class DatabaseLogHandler(logging.Handler):
+    """Custom logging handler that writes to StatusManager database."""
+    
+    def __init__(self, db_path: str):
+        super().__init__()
+        self.db_path = db_path
+        self.current_dag_id = None
+        self.current_execution_id = None
+        self.current_task_id = None
+    
+    def set_context(self, dag_id: str, execution_id: str, task_id: str = None):
+        """Set the current execution context for logging."""
+        self.current_dag_id = dag_id
+        self.current_execution_id = execution_id
+        self.current_task_id = task_id
+    
+    def emit(self, record):
+        """Emit a log record to the database."""
+        if self.current_dag_id and self.current_execution_id:
+            try:
+                log_entry = self.format(record)
+                
+                # Use a separate StatusManager instance to avoid connection conflicts
+                temp_sm = StatusManager(self.db_path)
+                with temp_sm as sm:
+                    sm.log_message(
+                        dag_id=self.current_dag_id,
+                        execution_id=self.current_execution_id,
+                        task_id=self.current_task_id or "system",
+                        level=record.levelname,
+                        message=log_entry
+                    )
+            except Exception:
+                # Don't let logging errors break the application
+                pass
+
+
 class Orchestrator:
     def __init__(self, log_level: str = "INFO", db_path: str = "maestro.db"):
         self.task_registry = TaskRegistry()
@@ -35,6 +72,17 @@ class Orchestrator:
             handlers=[RichHandler(console=self.console, rich_tracebacks=True)]
         )
         self.logger = logging.getLogger(__name__)
+        self.rich_handler = logging.getLogger().handlers[0]  # Store reference to rich handler
+    
+    def disable_rich_logging(self):
+        """Disable rich logging for async execution."""
+        if hasattr(self, 'rich_handler'):
+            logging.getLogger().removeHandler(self.rich_handler)
+    
+    def enable_rich_logging(self):
+        """Re-enable rich logging."""
+        if hasattr(self, 'rich_handler'):
+            logging.getLogger().addHandler(self.rich_handler)
 
     def register_task_type(self, name: str, task_class: Type[BaseTask]):
         """Register a custom task type."""
@@ -61,7 +109,7 @@ class Orchestrator:
         
         def execute():
             try:
-                self.run_dag(dag, resume=resume, fail_fast=fail_fast, status_callback=status_callback)
+                self.run_dag(dag, execution_id=execution_id, resume=resume, fail_fast=fail_fast, status_callback=status_callback)
                 with self.status_manager as sm:
                     sm.update_dag_execution_status(dag.dag_id, execution_id, "completed")
             except Exception as e:
@@ -77,6 +125,7 @@ class Orchestrator:
     def run_dag(
         self, 
         dag: DAG, 
+        execution_id: str = None,
         resume: bool = False, 
         fail_fast: bool = True, 
         status_manager=None, 
@@ -87,61 +136,92 @@ class Orchestrator:
         dag_id = dag.dag_id
         execution_order = dag.get_execution_order()
 
-        with self.status_manager as sm:
-            if not resume:
-                sm.reset_dag_status(dag_id)
+        # Set up database logging if execution_id is provided
+        db_handler = None
+        if execution_id:
+            db_handler = DatabaseLogHandler(self.status_manager.db_path)
+            db_handler.set_context(dag_id, execution_id)
+            
+            # Add the database handler to all task-related loggers
+            task_loggers = [
+                'maestro.tasks.terraform_task',
+                'maestro.tasks.extended_terraform_task',
+                'maestro.tasks.print_task',
+                'maestro.core.executors.ssh',
+                'maestro.core.executors.docker',
+                'maestro.core.executors.local'
+            ]
+            
+            for logger_name in task_loggers:
+                logger = logging.getLogger(logger_name)
+                logger.addHandler(db_handler)
 
-            for task_id in execution_order:
-                task = dag.tasks[task_id]
-                task_status = sm.get_task_status(dag_id, task.task_id)
+        try:
+            with self.status_manager as sm:
+                if not resume:
+                    sm.reset_dag_status(dag_id)
 
-                if resume and task_status == "completed":
-                    self.logger.info(f"Skipping already completed task: {task.task_id}")
-                    task.status = TaskStatus.COMPLETED
-                    if status_manager:
-                        status_manager.set_task_status(task.task_id, "completed")
-                    if progress_tracker:
-                        progress_tracker.increment_completed()
-                    if status_callback:
-                        status_callback()
-                    continue
+                for task_id in execution_order:
+                    task = dag.tasks[task_id]
+                    task_status = sm.get_task_status(dag_id, task.task_id)
 
-                try:
-                    task.status = TaskStatus.RUNNING
-                    sm.set_task_status(dag_id, task.task_id, "running")
-                    if status_manager:
-                        status_manager.set_task_status(task.task_id, "running")
-                    if status_callback:
-                        status_callback()
-
-                    self.logger.info(f"Executing task: {task.task_id}")
-                    executor_instance = self.executor_factory.get_executor(task.executor)
-                    task.execute(executor_instance)
-                    task.status = TaskStatus.COMPLETED
-                    sm.set_task_status(dag_id, task.task_id, "completed")
-                    if status_manager:
-                        status_manager.set_task_status(task.task_id, "completed")
-                    if progress_tracker:
-                        progress_tracker.increment_completed()
-                    if status_callback:
-                        status_callback()
-                    self.logger.info(f"Task {task.task_id} completed successfully")
-
-                except Exception as e:
-                    task.status = TaskStatus.FAILED
-                    sm.set_task_status(dag_id, task.task_id, "failed")
-                    if status_manager:
-                        status_manager.set_task_status(task.task_id, "failed")
-                    if status_callback:
-                        status_callback()
-
-                    error_msg = f"Task {task.task_id} failed: {e}"
-                    self.logger.error(error_msg)
-
-                    if fail_fast:
-                        raise Exception(error_msg)
-                    else:
+                    if resume and task_status == "completed":
+                        self.logger.info(f"Skipping already completed task: {task.task_id}")
+                        task.status = TaskStatus.COMPLETED
+                        if status_manager:
+                            status_manager.set_task_status(task.task_id, "completed")
+                        if progress_tracker:
+                            progress_tracker.increment_completed()
+                        if status_callback:
+                            status_callback()
                         continue
+
+                    try:
+                        task.status = TaskStatus.RUNNING
+                        sm.set_task_status(dag_id, task.task_id, "running")
+                        if status_manager:
+                            status_manager.set_task_status(task.task_id, "running")
+                        if status_callback:
+                            status_callback()
+
+                        # Update database handler context for this task
+                        if db_handler:
+                            db_handler.set_context(dag_id, execution_id, task.task_id)
+
+                        self.logger.info(f"Executing task: {task.task_id}")
+                        executor_instance = self.executor_factory.get_executor(task.executor)
+                        task.execute(executor_instance)
+                        task.status = TaskStatus.COMPLETED
+                        sm.set_task_status(dag_id, task.task_id, "completed")
+                        if status_manager:
+                            status_manager.set_task_status(task.task_id, "completed")
+                        if progress_tracker:
+                            progress_tracker.increment_completed()
+                        if status_callback:
+                            status_callback()
+                        self.logger.info(f"Task {task.task_id} completed successfully")
+
+                    except Exception as e:
+                        task.status = TaskStatus.FAILED
+                        sm.set_task_status(dag_id, task.task_id, "failed")
+                        if status_manager:
+                            status_manager.set_task_status(task.task_id, "failed")
+                        if status_callback:
+                            status_callback()
+
+                        error_msg = f"Task {task.task_id} failed: {e}"
+                        self.logger.error(error_msg)
+
+                        if fail_fast:
+                            raise Exception(error_msg)
+                        else:
+                            continue
+        finally:
+            # Clean up database handler
+            if db_handler:
+                for logger_name in task_loggers:
+                    logger = logging.getLogger(logger_name)
+                    logger.removeHandler(db_handler)
 
     def visualize_dag(self, dag: DAG):
         """Visualize DAG structure."""
