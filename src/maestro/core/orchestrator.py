@@ -89,9 +89,9 @@ class Orchestrator:
         self.task_registry.register(name, task_class)
         self.logger.info(f"Registered task type: {name}")
 
-    def load_dag_from_file(self, filepath: str) -> DAG:
+    def load_dag_from_file(self, filepath: str, dag_id: Optional[str] = None) -> DAG:
         """Load and validate DAG from YAML file."""
-        return self.dag_loader.load_dag_from_file(filepath)
+        return self.dag_loader.load_dag_from_file(filepath, dag_id=dag_id)
 
     def run_dag_in_thread(
         self, 
@@ -115,6 +115,11 @@ class Orchestrator:
             except Exception as e:
                 with self.status_manager as sm:
                     sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
+                    # Mark any running tasks as failed when DAG execution fails
+                    for task_id, task in dag.tasks.items():
+                        if task.status == TaskStatus.RUNNING:
+                            task.status = TaskStatus.FAILED
+                            sm.set_task_status(dag.dag_id, task_id, "failed")
                 self.logger.error(f"DAG {dag.dag_id} execution failed: {e}")
                 if fail_fast:
                     raise

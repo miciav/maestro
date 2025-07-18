@@ -20,10 +20,10 @@ class DAGLoader:
     def __init__(self, task_registry: TaskRegistry):
         self.task_registry = task_registry
 
-    def load_dag_from_file(self, filepath: str) -> DAG:
+    def load_dag_from_file(self, filepath: str, dag_id: Optional[str] = None) -> DAG:
         """Load and validate DAG from YAML file."""
         filepath = str(Path(filepath).resolve())
-        dag_id = Path(filepath).stem
+        dag_id = dag_id or Path(filepath).stem
 
         try:
             with open(filepath, "r") as f:

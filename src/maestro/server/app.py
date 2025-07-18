@@ -15,6 +15,9 @@ from contextlib import asynccontextmanager
 
 from maestro.core.orchestrator import Orchestrator
 from maestro.core.status_manager import StatusManager
+import random
+import string
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,9 +26,88 @@ logger = logging.getLogger(__name__)
 # Global orchestrator instance
 orchestrator = None
 
+# Docker-like name generator - lists of adjectives and nouns
+DOCKER_ADJECTIVES = [
+    "amazing", "awesome", "blissful", "bold", "brave", "charming", "clever", "cool", "dazzling", "determined",
+    "eager", "ecstatic", "elegant", "epic", "exciting", "fantastic", "friendly", "gallant", "gentle", "gracious",
+    "happy", "hardcore", "inspiring", "jolly", "keen", "kind", "laughing", "loving", "lucid", "magical",
+    "modest", "naughty", "nervous", "nice", "objective", "optimistic", "peaceful", "pedantic", "pensive", "practical",
+    "quirky", "relaxed", "romantic", "serene", "sharp", "stoic", "sweet", "tender", "thirsty", "trusting",
+    "unruffled", "upbeat", "vibrant", "vigilant", "wonderful", "xenial", "youthful", "zealous", "zen"
+]
+
+DOCKER_NOUNS = [
+    "albattani", "allen", "almeida", "antonelli", "archimedes", "ardinghelli", "aryabhata", "austin", "babbage", "banach",
+    "banzai", "bardeen", "bartik", "bassi", "beaver", "bell", "benz", "bhabha", "bhaskara", "black",
+    "blackburn", "blackwell", "bohr", "booth", "borg", "bose", "bouman", "boyd", "brahmagupta", "brattain",
+    "brown", "buck", "burnell", "cannon", "carson", "cartwright", "cerf", "chandrasekhar", "chaplygin", "chatelet",
+    "chatterjee", "chebyshev", "cohen", "chaum", "clarke", "colden", "cori", "cray", "curran", "curie",
+    "darwin", "davinci", "dewdney", "dhawan", "diffie", "dijkstra", "dirac", "driscoll", "dubinsky", "easley",
+    "edison", "einstein", "elbakyan", "elgamal", "elion", "ellis", "engelbart", "euclid", "euler", "faraday",
+    "feistel", "fermat", "fermi", "feynman", "franklin", "gagarin", "galileo", "galois", "ganguly", "gates",
+    "gauss", "germain", "goldberg", "goldstine", "goldwasser", "golick", "goodall", "gould", "greider", "grothendieck",
+    "haibt", "hamilton", "haslett", "hawking", "heisenberg", "hermann", "herschel", "hertz", "heyrovsky", "hodgkin",
+    "hofstadter", "hoover", "hopper", "hugle", "hypatia", "ishizaka", "jackson", "jang", "jemison", "jennings",
+    "jepsen", "johnson", "joliot", "jones", "kalam", "kapitsa", "kare", "keldysh", "keller", "kepler",
+    "khorana", "kilby", "kirch", "knuth", "kowalevski", "lalande", "lamarr", "lamport", "leakey", "leavitt",
+    "lederberg", "lehmann", "lewin", "lichterman", "liskov", "lovelace", "lumiere", "mahavira", "margulis", "matsumoto",
+    "maxwell", "mayer", "mccarthy", "mcclintock", "mclaren", "mclean", "mcnulty", "mendel", "mendeleev", "menshov",
+    "merkle", "mestorf", "mirzakhani", "moore", "morse", "murdoch", "moser", "napier", "nash", "neumann",
+    "newton", "nightingale", "nobel", "noether", "northcutt", "noyce", "panini", "pare", "pascal", "pasteur",
+    "payne", "perlman", "pike", "poincare", "poitras", "proskuriakova", "ptolemy", "raman", "ramanujan", "ride",
+    "montalcini", "ritchie", "robinson", "roentgen", "rosalind", "rubin", "saha", "sammet", "sanderson", "shannon",
+    "shaw", "shirley", "shockley", "shtern", "sinoussi", "snyder", "solomon", "spence", "stallman", "stonebraker",
+    "sutherland", "swanson", "swartz", "swirles", "taussig", "tereshkova", "tesla", "tharp", "thompson", "torvalds",
+    "tu", "turing", "varahamihira", "vaughan", "visvesvaraya", "volhard", "wescoff", "wilbur", "wiles", "williams",
+    "williamson", "wilson", "wing", "wozniak", "wright", "wu", "yalow", "yonath", "zhukovsky"
+]
+
+
+def generate_docker_like_name() -> str:
+    """Generate a Docker-like random name (adjective_noun format)."""
+    adjective = random.choice(DOCKER_ADJECTIVES)
+    noun = random.choice(DOCKER_NOUNS)
+    return f"{adjective}_{noun}"
+
+
+def validate_dag_id(dag_id: str) -> bool:
+    """Validate DAG ID format - must be alphanumeric with underscores and hyphens."""
+    if not dag_id:
+        return False
+    # Allow alphanumeric characters, underscores, and hyphens
+    return bool(re.match(r'^[a-zA-Z0-9_-]+$', dag_id))
+
+
+def check_dag_id_uniqueness(dag_id: str) -> bool:
+    """Check if DAG ID is unique by looking at existing DAGs in the database."""
+    try:
+        with orchestrator.status_manager as sm:
+            # Get all DAGs from the database
+            all_dags = sm.get_all_dags()
+            existing_dag_ids = [dag.get('dag_id') for dag in all_dags]
+            return dag_id not in existing_dag_ids
+    except Exception as e:
+        logger.error(f"Error checking DAG ID uniqueness: {e}")
+        return False
+
+
+def generate_unique_dag_id() -> str:
+    """Generate a unique DAG ID using Docker-like naming, ensuring uniqueness."""
+    max_attempts = 100
+    for _ in range(max_attempts):
+        dag_id = generate_docker_like_name()
+        if check_dag_id_uniqueness(dag_id):
+            return dag_id
+    
+    # If we can't generate a unique name after max_attempts, add a random suffix
+    base_name = generate_docker_like_name()
+    suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    return f"{base_name}_{suffix}"
+
 # Pydantic models for API requests/responses
 class DAGSubmissionRequest(BaseModel):
     dag_file_path: str
+    dag_id: Optional[str] = None
     resume: bool = False
     fail_fast: bool = True
 
@@ -103,8 +185,28 @@ async def root():
 async def submit_dag(request: DAGSubmissionRequest, background_tasks: BackgroundTasks):
     """Submit a DAG for execution"""
     try:
+        # Generate or check provided DAG ID
+        if request.dag_id is not None:
+            dag_id = request.dag_id.strip()
+            
+            # Validate DAG ID format
+            if not validate_dag_id(dag_id):
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid DAG ID format: '{dag_id}'. Must contain only alphanumeric characters, underscores, and hyphens."
+                )
+            
+            # Check uniqueness of provided DAG ID
+            if not check_dag_id_uniqueness(dag_id):
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"DAG ID '{dag_id}' already exists. Please choose a different DAG ID."
+                )
+        else:
+            dag_id = generate_unique_dag_id()
+
         # Load and validate DAG
-        dag = orchestrator.load_dag_from_file(request.dag_file_path)
+        dag = orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
         
         # Start DAG execution in background
         execution_id = orchestrator.run_dag_in_thread(
