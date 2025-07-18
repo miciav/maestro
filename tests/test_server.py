@@ -309,15 +309,19 @@ def test_main_start_server():
             main()
             mock_run.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_lifespan(monkeypatch):
     mock_orchestrator = MagicMock()
     monkeypatch.setattr("maestro.server.app.Orchestrator", lambda **kwargs: mock_orchestrator)
 
+    # Import the app module to access the orchestrator variable
+    from maestro.server import app as app_module
+
     async with lifespan(app):
-        global orchestrator
-        assert orchestrator is not None
-    
+        # Access the orchestrator from the app module, not as a global in test scope
+        assert app_module.orchestrator is not None
+
     mock_orchestrator.executor.shutdown.assert_called_once_with(wait=True)
 
 

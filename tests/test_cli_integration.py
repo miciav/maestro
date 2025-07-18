@@ -305,7 +305,7 @@ tasks:
         
         result = self.runner.invoke(app, ['list', '--status', 'completed'])
         assert result.exit_code == 0
-        assert 'completed-dag' in result.output
+        assert 'completed-' in result.output  # DAG ID is truncated in Rich table
         assert 'Completed DAGs' in result.output
     
     @pytest.mark.integration
