@@ -123,3 +123,48 @@ class DAGLoader:
                 continue
         
         raise ValueError(f"Unable to parse datetime string '{datetime_str}'. Supported formats: {formats}")
+
+    def load_dag_from_dict(self, dag_dict: Dict[str, Any]) -> DAG:
+        """Load a DAG from a dictionary representation."""
+        dag_id = dag_dict.get("dag_id", "default_dag")
+        start_time_str = dag_dict.get("start_time")
+        start_time = self._parse_datetime(start_time_str) if start_time_str else None
+        cron_schedule = dag_dict.get("cron_schedule")
+
+        dag = DAG(dag_id=dag_id, start_time=start_time, cron_schedule=cron_schedule)
+
+        # Get tasks from the dictionary
+        tasks = dag_dict.get("tasks", {})
+        
+        # Handle tasks as a dictionary (from to_dict())
+        for task_id, task_config in tasks.items():
+            if isinstance(task_config, dict):
+                # Add task_id to the config if not present
+                if "task_id" not in task_config:
+                    task_config["task_id"] = task_id
+                    
+                # Ensure type field exists (from the serialized task model)
+                # The type might be stored as the class name without 'Task' suffix
+                if "type" not in task_config and task_config.get("task_id"):
+                    # Try to infer type from other fields or use a default
+                    if "playbook" in task_config:
+                        task_config["type"] = "AnsibleTask"
+                    elif "working_dir" in task_config and "workflow_mode" in task_config:
+                        task_config["type"] = "ExtendedTerraformTask"
+                    elif "message" in task_config:
+                        task_config["type"] = "PrintTask"
+                    elif "wait_seconds" in task_config:
+                        task_config["type"] = "WaitTask"
+                    elif "file_path" in task_config and "content" in task_config:
+                        task_config["type"] = "FileWriterTask"
+                    else:
+                        # Default to PrintTask if we can't determine the type
+                        task_config["type"] = "PrintTask"
+                        if "message" not in task_config:
+                            task_config["message"] = f"Task {task_id}"
+                
+                task = self._create_task_from_config(task_config, None)
+                dag.add_task(task)
+
+        dag.validate()
+        return dag

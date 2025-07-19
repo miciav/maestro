@@ -44,3 +44,10 @@ class Task(BaseModel, ABC):
 
     def __repr__(self):
         return f"Task(task_id='{self.task_id}', status='{self.status.value}')"
+
+    def to_dict(self):
+        """Returns a dictionary representation of the task."""
+        task_dict = self.model_dump(exclude={'on_success', 'on_failure'})
+        # Add the type field based on the class name
+        task_dict['type'] = self.__class__.__name__
+        return task_dict

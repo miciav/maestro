@@ -2,6 +2,47 @@ import sqlite3
 import threading
 from typing import Dict, Optional, List, Any
 from datetime import datetime, timedelta
+import re
+import random
+import string
+import json
+
+# Docker-like name generator - lists of adjectives and nouns
+DOCKER_ADJECTIVES = [
+    "amazing", "awesome", "blissful", "bold", "brave", "charming", "clever", "cool", "dazzling", "determined",
+    "eager", "ecstatic", "elegant", "epic", "exciting", "fantastic", "friendly", "gallant", "gentle", "gracious",
+    "happy", "hardcore", "inspiring", "jolly", "keen", "kind", "laughing", "loving", "lucid", "magical",
+    "modest", "naughty", "nervous", "nice", "objective", "optimistic", "peaceful", "pedantic", "pensive", "practical",
+    "quirky", "relaxed", "romantic", "serene", "sharp", "stoic", "sweet", "tender", "thirsty", "trusting",
+    "unruffled", "upbeat", "vibrant", "vigilant", "wonderful", "xenial", "youthful", "zealous", "zen"
+]
+
+DOCKER_NOUNS = [
+    "albattani", "allen", "almeida", "antonelli", "archimedes", "ardinghelli", "aryabhata", "austin", "babbage", "banach",
+    "banzai", "bardeen", "bartik", "bassi", "beaver", "bell", "benz", "bhabha", "bhaskara", "black",
+    "blackburn", "blackwell", "bohr", "booth", "borg", "bose", "bouman", "boyd", "brahmagupta", "brattain",
+    "brown", "buck", "burnell", "cannon", "carson", "cartwright", "cerf", "chandrasekhar", "chaplygin", "chatelet",
+    "chatterjee", "chebyshev", "cohen", "chaum", "clarke", "colden", "cori", "cray", "curran", "curie",
+    "darwin", "davinci", "dewdney", "dhawan", "diffie", "dijkstra", "dirac", "driscoll", "dubinsky", "easley",
+    "edison", "einstein", "elbakyan", "elgamal", "elion", "ellis", "engelbart", "euclid", "euler", "faraday",
+    "feistel", "fermat", "fermi", "feynman", "franklin", "gagarin", "galileo", "galois", "ganguly", "gates",
+    "gauss", "germain", "goldberg", "goldstine", "goldwasser", "golick", "goodall", "gould", "greider", "grothendieck",
+    "haibt", "hamilton", "haslett", "hawking", "heisenberg", "hermann", "herschel", "hertz", "heyrovsky", "hodgkin",
+    "hofstadter", "hoover", "hopper", "hugle", "hypatia", "ishizaka", "jackson", "jang", "jemison", "jennings",
+    "jepsen", "johnson", "joliot", "jones", "kalam", "kapitsa", "kare", "keldysh", "keller", "kepler",
+    "khorana", "kilby", "kirch", "knuth", "kowalevski", "lalande", "lamarr", "lamport", "leakey", "leavitt",
+    "lederberg", "lehmann", "lewin", "lichterman", "liskov", "lovelace", "lumiere", "mahavira", "margulis", "matsumoto",
+    "maxwell", "mayer", "mccarthy", "mcclintock", "mclaren", "mclean", "mcnulty", "mendel", "mendeleev", "menshov",
+    "merkle", "mestorf", "mirzakhani", "moore", "morse", "murdoch", "moser", "napier", "nash", "neumann",
+    "newton", "nightingale", "nobel", "noether", "northcutt", "noyce", "panini", "pare", "pascal", "pasteur",
+    "payne", "perlman", "pike", "poincare", "poitras", "proskuriakova", "ptolemy", "raman", "ramanujan", "ride",
+    "montalcini", "ritchie", "robinson", "roentgen", "rosalind", "rubin", "saha", "sammet", "sanderson", "shannon",
+    "shaw", "shirley", "shockley", "shtern", "sinoussi", "snyder", "solomon", "spence", "stallman", "stonebraker",
+    "sutherland", "swanson", "swartz", "swirles", "taussig", "tereshkova", "tesla", "tharp", "thompson", "torvalds",
+    "tu", "turing", "varahamihira", "vaughan", "visvesvaraya", "volhard", "wescoff", "wilbur", "wiles", "williams",
+    "williamson", "wilson", "wing", "wozniak", "wright", "wu", "yalow", "yonath", "zhukovsky"
+]
+
 
 class StatusManager:
     _tables_initialized = {}  # Class-level cache to track initialized databases
@@ -37,6 +78,7 @@ class StatusManager:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS dags (
                 id TEXT PRIMARY KEY,
+                definition TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -288,15 +330,27 @@ class StatusManager:
         """Get all DAGs regardless of status."""
         with self._lock:
             with self._conn:
+                # Get all DAGs with their latest execution info
                 cursor = self._conn.execute("""
-                    SELECT dag_id, id, status, started_at, completed_at, thread_id, pid
-                    FROM executions 
-                    ORDER BY started_at DESC
+                    SELECT 
+                        d.id as dag_id,
+                        e.id as execution_id,
+                        e.status,
+                        e.started_at,
+                        e.completed_at,
+                        e.thread_id,
+                        e.pid
+                    FROM dags d
+                    LEFT JOIN (
+                        SELECT *, ROW_NUMBER() OVER (PARTITION BY dag_id ORDER BY started_at DESC) as rn
+                        FROM executions
+                    ) e ON d.id = e.dag_id AND e.rn = 1
+                    ORDER BY COALESCE(e.started_at, d.created_at) DESC
                 """)
                 return [{
                     "dag_id": row[0],
                     "execution_id": row[1],
-                    "status": row[2],
+                    "status": row[2] if row[2] else "created",
                     "started_at": row[3],
                     "completed_at": row[4],
                     "thread_id": row[5],
@@ -486,3 +540,57 @@ class StatusManager:
                     "timestamp": row[3],
                     "thread_id": row[4]
                 } for row in cursor.fetchall()]
+
+    def validate_dag_id(self, dag_id: str) -> bool:
+        """Validate DAG ID format - must be alphanumeric with underscores and hyphens."""
+        if not dag_id:
+            return False
+        # Allow alphanumeric characters, underscores, and hyphens
+        return bool(re.match(r'^[a-zA-Z0-9_-]+$', dag_id))
+
+    def check_dag_id_uniqueness(self, dag_id: str) -> bool:
+        """Check if DAG ID is unique by looking at existing DAGs in the database."""
+        with self._lock:
+            with self._conn:
+                cursor = self._conn.execute("SELECT id FROM dags WHERE id = ?", (dag_id,))
+                return cursor.fetchone() is None
+
+    def generate_unique_dag_id(self) -> str:
+        """Generate a unique DAG ID using Docker-like naming, ensuring uniqueness."""
+        max_attempts = 100
+        for _ in range(max_attempts):
+            dag_id = f"{random.choice(DOCKER_ADJECTIVES)}_{random.choice(DOCKER_NOUNS)}"
+            if self.check_dag_id_uniqueness(dag_id):
+                return dag_id
+        
+        # If we can't generate a unique name after max_attempts, add a random suffix
+        base_name = f"{random.choice(DOCKER_ADJECTIVES)}_{random.choice(DOCKER_NOUNS)}"
+        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        return f"{base_name}_{suffix}"
+
+    def save_dag_definition(self, dag):
+        """Save the DAG definition to the database."""
+        with self._lock:
+            with self._conn:
+                self._conn.execute("""
+                    INSERT OR REPLACE INTO dags (id, definition)
+                    VALUES (?, ?)
+                """, (dag.dag_id, json.dumps(dag.to_dict())))
+
+    def get_dag_definition(self, dag_id: str) -> Optional[Dict]:
+        """Get the DAG definition from the database."""
+        with self._lock:
+            with self._conn:
+                cursor = self._conn.execute("SELECT definition FROM dags WHERE id = ?", (dag_id,))
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return json.loads(row[0])
+                return None
+
+    def delete_dag(self, dag_id: str) -> int:
+        """Delete a DAG and all its associated executions, tasks, and logs."""
+        with self._lock:
+            with self._conn:
+                cursor = self._conn.execute("DELETE FROM dags WHERE id = ?", (dag_id,))
+                return cursor.rowcount
+

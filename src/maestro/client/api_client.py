@@ -44,14 +44,32 @@ class MaestroAPIClient:
     def submit_dag(self, dag_file_path: str,
                    resume: bool = False,
                    fail_fast: bool = True) -> Dict[str, Any]:
-        """Submit a DAG for execution"""
+        """Submit a DAG for execution (legacy)"""
+        # This method is now a wrapper around create_dag and run_dag
+        # It's kept for backward compatibility with the old CLI 'submit' command
+        create_response = self.create_dag(dag_file_path)
+        dag_id = create_response["dag_id"]
+        return self.run_dag(dag_id, resume, fail_fast)
+
+    def create_dag(self, dag_file_path: str, dag_id: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new DAG from a YAML file"""
+        data = {"dag_file_path": dag_file_path}
+        if dag_id:
+            data["dag_id"] = dag_id
+        response = self._make_request(method="POST",
+                                      endpoint="/v1/dags/create",
+                                      json=data)
+        return response.json()
+
+    def run_dag(self, dag_id: str, resume: bool = False, fail_fast: bool = True) -> Dict[str, Any]:
+        """Run a previously created DAG"""
         data = {
-            "dag_file_path": dag_file_path,
+            "dag_id": dag_id,
             "resume": resume,
             "fail_fast": fail_fast
         }
         response = self._make_request(method="POST",
-                                      endpoint="/dags/submit",
+                                      endpoint=f"/v1/dags/{dag_id}/run",
                                       json=data)
         return response.json()
     
@@ -65,11 +83,11 @@ class MaestroAPIClient:
         response = self._make_request("GET", endpoint, params=params)
         return response.json()
     
-    def get_dag_logs(self, dag_id: str, execution_id: Optional[str] = None, 
+    def get_dag_logs_v1(self, dag_id: str, execution_id: Optional[str] = None, 
                      limit: int = 100, task_filter: Optional[str] = None, 
-                     level_filter: Optional[str] = None) -> Dict[str, Any]:
-        """Get logs for a specific DAG execution"""
-        endpoint = f"/dags/{dag_id}/logs"
+                     level_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get logs for a specific DAG execution using the v1 API"""
+        endpoint = f"/v1/dags/{dag_id}/log"
         params = {"limit": limit}
         
         if execution_id:
@@ -82,11 +100,11 @@ class MaestroAPIClient:
         response = self._make_request("GET", endpoint, params=params)
         return response.json()
     
-    def stream_dag_logs(self, dag_id: str, execution_id: Optional[str] = None,
+    def stream_dag_logs_v1(self, dag_id: str, execution_id: Optional[str] = None,
                        task_filter: Optional[str] = None, 
                        level_filter: Optional[str] = None) -> Iterator[Dict[str, Any]]:
-        """Stream logs for a specific DAG execution in real-time"""
-        endpoint = f"/dags/{dag_id}/logs/stream"
+        """Stream logs for a specific DAG execution in real-time using the v1 API"""
+        endpoint = f"/v1/dags/{dag_id}/attach"
         params = {}
         
         if execution_id:
@@ -148,15 +166,47 @@ class MaestroAPIClient:
         
         response = self._make_request("DELETE", endpoint, params=params)
         return response.json()
+
+    def remove_dag(self, dag_id: str, force: bool = False) -> Dict[str, Any]:
+        """Remove a DAG and its executions"""
+        endpoint = f"/v1/dags/{dag_id}"
+        params = {"force": force}
+        response = self._make_request("DELETE", endpoint, params=params)
+        return response.json()
     
     def list_dags(self, status_filter: Optional[str] = None) -> Dict[str, Any]:
-        """List all DAGs with optional status filtering"""
-        endpoint = "/dags/list"
+        """List all DAGs with optional status filtering (legacy)"""
+        # This method is now a wrapper around list_dags_v1
+        # It's kept for backward compatibility with the old CLI 'list' command
+        if status_filter == "running":
+            return {"dags": self.list_dags_v1("active"), "title": "Running DAGs", "count": len(self.list_dags_v1("active"))}
+        else:
+            return {"dags": self.list_dags_v1("all"), "title": "All DAGs", "count": len(self.list_dags_v1("all"))}
+
+    def list_dags_v1(self, filter: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List all DAGs with optional filtering using the v1 API"""
+        endpoint = "/v1/dags"
         params = {}
-        if status_filter:
-            params["status"] = status_filter
+        if filter:
+            params["filter"] = filter
         
         response = self._make_request("GET", endpoint, params=params)
+        return response.json()
+
+    def stop_dag(self, dag_id: str, execution_id: Optional[str] = None) -> Dict[str, Any]:
+        """Stop a running DAG execution"""
+        endpoint = f"/v1/dags/{dag_id}/stop"
+        data = {}
+        if execution_id:
+            data["execution_id"] = execution_id
+        response = self._make_request("POST", endpoint, json=data)
+        return response.json()
+
+    def resume_dag(self, dag_id: str, execution_id: str) -> Dict[str, Any]:
+        """Resume a previously stopped DAG execution"""
+        endpoint = f"/v1/dags/{dag_id}/resume"
+        data = {"dag_id": dag_id, "execution_id": execution_id}
+        response = self._make_request("POST", endpoint, json=data)
         return response.json()
     
     def is_server_running(self) -> bool:

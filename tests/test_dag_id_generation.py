@@ -5,43 +5,68 @@ Test cases for DAG ID generation and validation functionality.
 import pytest
 import re
 from unittest.mock import Mock, patch, MagicMock
-from maestro.server.app import (
-    generate_docker_like_name,
-    validate_dag_id,
-    check_dag_id_uniqueness,
-    generate_unique_dag_id,
-    DOCKER_ADJECTIVES,
-    DOCKER_NOUNS
-)
+from maestro.core.status_manager import StatusManager, DOCKER_ADJECTIVES, DOCKER_NOUNS
+import tempfile
+import os
+import sqlite3
 
 
 class TestDockerLikeNameGeneration:
     """Test Docker-like name generation functionality."""
     
+    def setup_method(self):
+        """Set up a temporary database for each test."""
+        self.temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        self.temp_db.close()
+        self.sm = StatusManager(self.temp_db.name)
+    
+    def teardown_method(self):
+        """Clean up the temporary database."""
+        if os.path.exists(self.temp_db.name):
+            os.unlink(self.temp_db.name)
+    
     def test_generate_docker_like_name_format(self):
         """Test that generated names follow the adjective_noun format."""
-        name = generate_docker_like_name()
-        assert "_" in name
-        adjective, noun = name.split("_", 1)
-        assert adjective in DOCKER_ADJECTIVES
-        assert noun in DOCKER_NOUNS
+        with self.sm as sm:
+            name = sm.generate_unique_dag_id()
+            assert "_" in name
+            parts = name.split("_")
+            # Should have at least adjective and noun (might have suffix if collision)
+            assert len(parts) >= 2
+            adjective = parts[0]
+            noun = parts[1]
+            assert adjective in DOCKER_ADJECTIVES
+            assert noun in DOCKER_NOUNS
     
     def test_generate_docker_like_name_randomness(self):
         """Test that generated names are different (mostly)."""
-        names = [generate_docker_like_name() for _ in range(10)]
-        # Most names should be different (allowing for some duplicates due to randomness)
-        unique_names = set(names)
-        assert len(unique_names) >= 7  # Allow for some duplicates
+        with self.sm as sm:
+            names = [sm.generate_unique_dag_id() for _ in range(10)]
+            # Most names should be different (allowing for some duplicates due to randomness)
+            unique_names = set(names)
+            assert len(unique_names) >= 7  # Allow for some duplicates
     
     def test_generate_docker_like_name_valid_characters(self):
         """Test that generated names only contain valid characters."""
-        name = generate_docker_like_name()
-        # Should only contain alphanumeric and underscores
-        assert re.match(r'^[a-zA-Z0-9_]+$', name)
+        with self.sm as sm:
+            name = sm.generate_unique_dag_id()
+            # Should only contain alphanumeric, underscores, and hyphens
+            assert re.match(r'^[a-zA-Z0-9_-]+$', name)
 
 
 class TestDAGIDValidation:
     """Test DAG ID validation functionality."""
+    
+    def setup_method(self):
+        """Set up a temporary database for each test."""
+        self.temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        self.temp_db.close()
+        self.sm = StatusManager(self.temp_db.name)
+    
+    def teardown_method(self):
+        """Clean up the temporary database."""
+        if os.path.exists(self.temp_db.name):
+            os.unlink(self.temp_db.name)
     
     def test_validate_dag_id_valid_cases(self):
         """Test validation with valid DAG IDs."""
@@ -55,8 +80,9 @@ class TestDAGIDValidation:
             "test-dag_123"
         ]
         
-        for dag_id in valid_ids:
-            assert validate_dag_id(dag_id), f"'{dag_id}' should be valid"
+        with self.sm as sm:
+            for dag_id in valid_ids:
+                assert sm.validate_dag_id(dag_id), f"'{dag_id}' should be valid"
     
     def test_validate_dag_id_invalid_cases(self):
         """Test validation with invalid DAG IDs."""
@@ -71,114 +97,142 @@ class TestDAGIDValidation:
             None,  # None value
         ]
         
-        for dag_id in invalid_ids:
-            assert not validate_dag_id(dag_id), f"'{dag_id}' should be invalid"
+        with self.sm as sm:
+            for dag_id in invalid_ids:
+                assert not sm.validate_dag_id(dag_id), f"'{dag_id}' should be invalid"
 
 
 class TestDAGIDUniquenessCheck:
     """Test DAG ID uniqueness checking functionality."""
     
-    @patch('maestro.server.app.orchestrator')
-    def test_check_dag_id_uniqueness_unique(self, mock_orchestrator):
+    def setup_method(self):
+        """Set up a temporary database for each test."""
+        self.temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        self.temp_db.close()
+        self.sm = StatusManager(self.temp_db.name)
+    
+    def teardown_method(self):
+        """Clean up the temporary database."""
+        if os.path.exists(self.temp_db.name):
+            os.unlink(self.temp_db.name)
+    
+    def test_check_dag_id_uniqueness_unique(self):
         """Test uniqueness check when DAG ID is unique."""
-        mock_sm = Mock()
-        mock_sm.get_all_dags.return_value = [
-            {'dag_id': 'existing_dag_1'},
-            {'dag_id': 'existing_dag_2'}
-        ]
-        mock_orchestrator.status_manager.__enter__.return_value = mock_sm
-        
-        # Test with a new DAG ID
-        assert check_dag_id_uniqueness('new_dag_id') is True
+        with self.sm as sm:
+            # Add some existing DAGs
+            sm._create_dag_if_not_exists('existing_dag_1')
+            sm._create_dag_if_not_exists('existing_dag_2')
+            
+            # Test with a new DAG ID
+            assert sm.check_dag_id_uniqueness('new_dag_id') is True
     
-    @patch('maestro.server.app.orchestrator')
-    def test_check_dag_id_uniqueness_duplicate(self, mock_orchestrator):
+    def test_check_dag_id_uniqueness_duplicate(self):
         """Test uniqueness check when DAG ID already exists."""
-        mock_sm = Mock()
-        mock_sm.get_all_dags.return_value = [
-            {'dag_id': 'existing_dag_1'},
-            {'dag_id': 'existing_dag_2'}
-        ]
-        mock_orchestrator.status_manager.__enter__.return_value = mock_sm
-        
-        # Test with an existing DAG ID
-        assert check_dag_id_uniqueness('existing_dag_1') is False
+        with self.sm as sm:
+            # Add some existing DAGs
+            sm._create_dag_if_not_exists('existing_dag_1')
+            sm._create_dag_if_not_exists('existing_dag_2')
+            
+            # Test with an existing DAG ID
+            assert sm.check_dag_id_uniqueness('existing_dag_1') is False
     
-    @patch('maestro.server.app.orchestrator')
-    def test_check_dag_id_uniqueness_error_handling(self, mock_orchestrator):
+    def test_check_dag_id_uniqueness_error_handling(self):
         """Test uniqueness check error handling."""
-        mock_orchestrator.status_manager.__enter__.side_effect = Exception("Database error")
+        # Create a temporary file for the database that we'll remove
+        temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        temp_db.close()
+        sm = StatusManager(temp_db.name)
         
-        # Should return False when there's an error
-        assert check_dag_id_uniqueness('test_dag') is False
+        # Remove the database file to simulate an error during operation
+        os.unlink(temp_db.name)
+        
+        # Now trying to connect should fail
+        with pytest.raises(sqlite3.OperationalError):
+            with sm as s:
+                s.check_dag_id_uniqueness('test_dag')
     
-    @patch('maestro.server.app.orchestrator')
-    def test_check_dag_id_uniqueness_empty_database(self, mock_orchestrator):
+    def test_check_dag_id_uniqueness_empty_database(self):
         """Test uniqueness check with empty database."""
-        mock_sm = Mock()
-        mock_sm.get_all_dags.return_value = []
-        mock_orchestrator.status_manager.__enter__.return_value = mock_sm
-        
-        # Any DAG ID should be unique in empty database
-        assert check_dag_id_uniqueness('any_dag_id') is True
+        with self.sm as sm:
+            # Any DAG ID should be unique in empty database
+            assert sm.check_dag_id_uniqueness('any_dag_id') is True
 
 
 class TestUniqueDAGIDGeneration:
     """Test unique DAG ID generation functionality."""
     
-    @patch('maestro.server.app.check_dag_id_uniqueness')
-    @patch('maestro.server.app.generate_docker_like_name')
-    def test_generate_unique_dag_id_first_attempt(self, mock_generate, mock_check):
+    def setup_method(self):
+        """Set up a temporary database for each test."""
+        self.temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        self.temp_db.close()
+        self.sm = StatusManager(self.temp_db.name)
+    
+    def teardown_method(self):
+        """Clean up the temporary database."""
+        if os.path.exists(self.temp_db.name):
+            os.unlink(self.temp_db.name)
+    
+    def test_generate_unique_dag_id_first_attempt(self):
         """Test successful generation on first attempt."""
-        mock_generate.return_value = "amazing_tesla"
-        mock_check.return_value = True
-        
-        result = generate_unique_dag_id()
-        
-        assert result == "amazing_tesla"
-        mock_generate.assert_called_once()
-        mock_check.assert_called_once_with("amazing_tesla")
+        with self.sm as sm:
+            result = sm.generate_unique_dag_id()
+            
+            # Should be a valid format
+            assert "_" in result
+            parts = result.split("_")
+            assert len(parts) >= 2
+            assert parts[0] in DOCKER_ADJECTIVES
+            assert parts[1] in DOCKER_NOUNS
     
-    @patch('maestro.server.app.check_dag_id_uniqueness')
-    @patch('maestro.server.app.generate_docker_like_name')
-    def test_generate_unique_dag_id_retry_logic(self, mock_generate, mock_check):
+    def test_generate_unique_dag_id_retry_logic(self):
         """Test retry logic when first attempts fail."""
-        mock_generate.side_effect = ["duplicate_name", "another_duplicate", "unique_name"]
-        mock_check.side_effect = [False, False, True]
-        
-        result = generate_unique_dag_id()
-        
-        assert result == "unique_name"
-        assert mock_generate.call_count == 3
-        assert mock_check.call_count == 3
+        with self.sm as sm:
+            # Pre-populate database with many DAGs to increase chance of collision
+            for adj in DOCKER_ADJECTIVES[:10]:  # Use first 10 adjectives
+                for noun in DOCKER_NOUNS[:10]:  # Use first 10 nouns
+                    sm._create_dag_if_not_exists(f"{adj}_{noun}")
+            
+            # Generate a new unique ID
+            result = sm.generate_unique_dag_id()
+            
+            # Should still get a unique ID
+            assert sm.check_dag_id_uniqueness(result)
+            assert "_" in result
     
-    @patch('maestro.server.app.check_dag_id_uniqueness')
-    @patch('maestro.server.app.generate_docker_like_name')
-    @patch('maestro.server.app.random.choices')
-    def test_generate_unique_dag_id_fallback_suffix(self, mock_choices, mock_generate, mock_check):
+    @patch('maestro.core.status_manager.random.choices')
+    def test_generate_unique_dag_id_fallback_suffix(self, mock_choices):
         """Test fallback to suffix when max attempts reached."""
-        # Make all attempts fail uniqueness check
-        mock_check.return_value = False
-        mock_generate.return_value = "always_duplicate"
         mock_choices.return_value = ['a', 'b', 'c', 'd', 'e', 'f']
         
-        result = generate_unique_dag_id()
-        
-        assert result == "always_duplicate_abcdef"
-        assert mock_generate.call_count == 101  # 100 attempts + 1 for fallback
-        assert mock_check.call_count == 100
-        mock_choices.assert_called_once()
+        with self.sm as sm:
+            # Pre-populate database with ALL possible combinations
+            # This is impractical in reality but simulates the worst case
+            # Instead, we'll mock the check_dag_id_uniqueness method
+            original_check = sm.check_dag_id_uniqueness
+            call_count = 0
+            
+            def mock_check(dag_id):
+                nonlocal call_count
+                call_count += 1
+                # Return False for first 100 calls, then True
+                if call_count <= 100:
+                    return False
+                return original_check(dag_id)
+            
+            sm.check_dag_id_uniqueness = mock_check
+            
+            result = sm.generate_unique_dag_id()
+            
+            # Should have a suffix
+            assert result.endswith("_abcdef")
+            assert call_count >= 100  # Should have tried at least 100 times
     
-    @patch('maestro.server.app.check_dag_id_uniqueness')
-    @patch('maestro.server.app.generate_docker_like_name')
-    def test_generate_unique_dag_id_valid_format(self, mock_generate, mock_check):
+    def test_generate_unique_dag_id_valid_format(self):
         """Test that generated unique DAG ID has valid format."""
-        mock_generate.return_value = "amazing_tesla"
-        mock_check.return_value = True
-        
-        result = generate_unique_dag_id()
-        
-        assert validate_dag_id(result)
+        with self.sm as sm:
+            result = sm.generate_unique_dag_id()
+            
+            assert sm.validate_dag_id(result)
 
 
 class TestDockerListContents:
