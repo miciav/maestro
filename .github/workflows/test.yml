@@ -13,6 +13,128 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # Prevent hanging tests
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    # Install Terraform to fix the failing terraform tests
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: '1.7.0' # Use a stable recent version
+        terraform_wrapper: false # Avoids wrapper script issues in tests
+
+    # Install OpenTofu as alternative (optional)
+    - name: Setup OpenTofu
+      uses: opentofu/setup-opentofu@v1
+      with:
+        tofu_version: '1.6.0'
+      continue-on-error: true # Don't fail if OpenTofu setup fails
+
+    - name: Install uv
+      run: pip install uv
+
+    - name: Cache uv dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/uv
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml', '**/uv.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-uv-
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra test
+
+    # Verify terraform installation
+    - name: Verify Terraform installation
+      run: |
+        terraform version
+        which terraform
+
+    # Run tests with better reporting
+    - name: Run tests
+      run: |
+        uv run pytest tests/ \
+          --verbose \
+          --tb=short \
+          --maxfail=5 \
+          --durations=10 \
+          --cov=maestro \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --junit-xml=test-results.xml
+
+    # Upload test results for better debugging
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always() # Upload even if tests fail
+      with:
+        name: test-results
+        path: |
+          test-results.xml
+          coverage.xml
+
+    # Upload coverage to codecov (optional)
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      if: success()
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+      continue-on-error: true
+
+  # Optional: Add a separate job for integration tests if you have them
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name != 'pull_request' # Skip on PRs to save resources
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: '1.7.0'
+        terraform_wrapper: false
+
+    - name: Install uv
+      run: pip install uv
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra test
+
+    # Run integration tests (if you have them in a separate directory)
+    - name: Run integration tests
+      run: |
+        if [ -d "tests/integration" ]; then
+          uv run pytest tests/integration/ --verbose --tb=short
+        else
+          echo "No integration tests found, skipping..."
+        fi
+
+  # Optional: Lint and format check job
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
     - name: Checkout code
@@ -26,30 +148,127 @@ jobs:
     - name: Install uv
       run: pip install uv
 
-    - name: Install dependencies and Run tests
+    - name: Install dependencies
       run: |
-        uv sync --extra test
-        uv run pytest tests/
+        uv sync --extra dev --extra test
+
+    # Run linting and formatting checks
+    - name: Run ruff check
+      run: |
+        uv run ruff check .
+      continue-on-error: true
+
+    - name: Run ruff format check
+      run: |
+        uv run ruff format --check .
+      continue-on-error: true
+
+    # Optional: Run mypy type checking
+    - name: Run type checking
+      run: |
+        if uv pip list | grep -q mypy; then
+          uv run mypy maestro/ || true
+        else
+          echo "mypy not installed, skipping type checking"
+        fi
+      continue-on-error: true
 
   release:
-    needs: test # This job depends on the 'test' job passing
+    needs: [test, lint] # Depend on both test and lint jobs
     if: startsWith(github.ref, 'refs/tags/v') # Only run if the push is a tag starting with 'v'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write # Grant write permissions for creating releases
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Fetch full history for changelog generation
+
+    # Extract version from tag
+    - name: Extract version
+      id: extract_version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    # Generate changelog (optional)
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Simple changelog generation - you can make this more sophisticated
+        CHANGELOG=$(git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD || echo "- Initial release")
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.ref_name }}
         name: Release ${{ github.ref_name }}
-        body: |-
-          Automated release for tag ${{ github.ref_name }}.
+        body: |
+          ## Release ${{ steps.extract_version.outputs.version }}
+          
+          ### Changes
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ### Installation
+          ```bash
+          pip install maestro==${{ steps.extract_version.outputs.version }}
+          ```
+          
+          ### What's Changed
+          Full Changelog: https://github.com/${{ github.repository }}/compare/v${{ steps.extract_version.outputs.version }}...HEAD
         draft: false
-        prerelease: false
+        prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+        generate_release_notes: true # Let GitHub generate additional release notes
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # Optional: Publish to PyPI if you want to distribute your package
+    # - name: Build and publish to PyPI
+    #   run: |
+    #     uv build
+    #     uv publish
+    #   env:
+    #     UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+  # Optional: Security scan job
+  security:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' # Skip on PRs
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Install uv
+      run: pip install uv
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra test
+
+    # Run security scan with safety
+    - name: Run safety check
+      run: |
+        uv pip install safety
+        uv run safety check --json || true
+      continue-on-error: true
+
+    # Run bandit security linter
+    - name: Run bandit security scan
+      run: |
+        uv pip install bandit
+        uv run bandit -r maestro/ -f json || true
+      continue-on-error: true

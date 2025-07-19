@@ -276,9 +276,9 @@ class TestStatusManagerCLIFeatures:
             # Create execution
             sm.create_dag_execution(dag_id, execution_id)
             
-            # Add some task statuses
-            sm.set_task_status(dag_id, "task1", "completed")
-            sm.set_task_status(dag_id, "task2", "running")
+            # Add some task statuses with execution_id
+            sm.set_task_status(dag_id, "task1", "completed", execution_id)
+            sm.set_task_status(dag_id, "task2", "running", execution_id)
             
             # Get details
             details = sm.get_dag_execution_details(dag_id, execution_id)
@@ -376,8 +376,8 @@ class TestCLIDataStructures:
             
             # Create execution with tasks
             sm.create_dag_execution(dag_id, execution_id)
-            sm.set_task_status(dag_id, "task1", "completed")
-            sm.set_task_status(dag_id, "task2", "running")
+            sm.set_task_status(dag_id, "task1", "completed", execution_id)
+            sm.set_task_status(dag_id, "task2", "running", execution_id)
             
             # Get details
             details = sm.get_dag_execution_details(dag_id, execution_id)

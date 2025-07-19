@@ -101,6 +101,16 @@ class StatusManager:
             current_time = datetime.now().isoformat()
             thread_id = threading.current_thread().ident
             
+            # If execution_id is None, use a default value to ensure queries work
+            if execution_id is None:
+                execution_id = "default"
+                # Ensure the default execution exists
+                self._conn.execute("""
+                    INSERT OR IGNORE INTO executions 
+                    (id, dag_id, status, started_at, thread_id, pid)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (execution_id, dag_id, "running", current_time, str(thread_id), str(thread_id)))
+            
             with self._conn:
                 if status == "running":
                     self._conn.execute("""
@@ -127,6 +137,9 @@ class StatusManager:
                         (id, dag_id, execution_id, status, thread_id)
                         VALUES (?, ?, ?, ?, ?)
                     """, (task_id, dag_id, execution_id, status, str(thread_id)))
+                
+                # Explicitly commit the transaction
+                self._conn.commit()
 
     def get_task_status(self, dag_id: str, task_id: str, execution_id: str = None) -> Optional[str]:
         """Get task status with thread safety."""
@@ -134,10 +147,18 @@ class StatusManager:
             with self._conn:
                 if execution_id:
                     cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ? AND execution_id = ?", (dag_id, task_id, execution_id))
+                    row = cursor.fetchone()
+                    if row:
+                        return row[0]
+                    # If not found with specific execution_id, try the default execution
+                    cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ? AND execution_id = ?", (dag_id, task_id, "default"))
+                    row = cursor.fetchone()
+                    return row[0] if row else None
                 else:
-                    cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ?", (dag_id, task_id))
-                row = cursor.fetchone()
-                return row[0] if row else None
+                    # When execution_id is None, look for the default execution_id
+                    cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ? AND execution_id = ?", (dag_id, task_id, "default"))
+                    row = cursor.fetchone()
+                    return row[0] if row else None
 
     def get_dag_status(self, dag_id: str, execution_id: str = None) -> Dict[str, str]:
         """Get DAG status with thread safety."""

@@ -105,9 +105,10 @@ class Orchestrator:
         # Create execution record in database synchronously
         with self.status_manager as sm:
             sm.create_dag_execution(dag.dag_id, execution_id)
-            # Initialize all tasks with pending status
-            task_ids = list(dag.tasks.keys())
-            sm.initialize_tasks_for_execution(dag.dag_id, execution_id, task_ids)
+            # Initialize all tasks with pending status only if not resuming
+            if not resume:
+                task_ids = list(dag.tasks.keys())
+                sm.initialize_tasks_for_execution(dag.dag_id, execution_id, task_ids)
         
         def execute():
             try:

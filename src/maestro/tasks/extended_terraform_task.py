@@ -58,13 +58,15 @@ class ExtendedTerraformTask(TerraformTask):
         logger = logging.getLogger(__name__)
         if self.workflow_mode:
             logger.info(f"[ExtendedTerraformTask] Executing full Terraform workflow for '{self.task_id}'.")
-            self._run_full_workflow()
+            result = self._run_full_workflow()
             logger.info(f"[ExtendedTerraformTask] Full workflow for '{self.task_id}' completed successfully.")
+            return result
         elif self.command:
             # Call the original execute method for single commands
             logger.info(f"[ExtendedTerraformTask] Executing single Terraform command '{self.command}' for '{self.task_id}'.")
-            super().execute_local()
+            result = super().execute_local()
             logger.info(f"[ExtendedTerraformTask] Single command for '{self.task_id}' completed successfully.")
+            return result
         else:
             raise ValueError("For ExtendedTerraformTask, either 'workflow_mode' must be true or a 'command' must be provided.")
 
