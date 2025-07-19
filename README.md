@@ -1,10 +1,11 @@
-
 # Maestro - Python Task Orchestrator
+
+<img src="docs/maestro-icon.png" width="1280" height="640" alt="Maestro banner" style="max-width: 100%; height: auto;">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org/downloads/release/python-3130/)
 
-Maestro is a production-ready Python task orchestrator that runs DAGs (Directed Acyclic Graphs) with a modern client-server architecture similar to Docker.
+> Maestro is a production-ready Python task orchestrator that runs DAGs (Directed Acyclic Graphs) with a modern client-server architecture similar to Docker.
 
 ## Features
 
