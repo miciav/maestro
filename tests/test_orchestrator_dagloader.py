@@ -184,7 +184,40 @@ dag:
     orchestrator.run_dag(dag, fail_fast=False)
 
     assert dag.tasks["failing_task"].status == TaskStatus.FAILED
-    assert dag.tasks["subsequent_task"].status == TaskStatus.COMPLETED # Should have run
+    assert dag.tasks["subsequent_task"].status == TaskStatus.SKIPPED
+
+    def test_orchestrator_run_dag_with_skipped_task_marks_dag_as_failed(orchestrator, tmp_path):
+        # Create a DAG with a failing task, which should cause the next to be skipped
+        content = """
+    dag:
+      tasks:
+        - task_id: failing_task
+          type: failing_task_type
+        - task_id: subsequent_task
+          type: print_task
+          message: "This should be skipped"
+          dependencies: [failing_task]
+    """
+        f = tmp_path / "dag_with_skipped.yaml"
+        f.write_text(content)
+
+        class FailingTask(BaseTask):
+            def execute_local(self):
+                raise Exception("Simulated task failure")
+
+        orchestrator.register_task_type("failing_task_type", FailingTask)
+
+        dag = orchestrator.load_dag_from_file(str(f))
+
+        # Use run_dag_in_thread to get the final status
+        execution_id = orchestrator.run_dag_in_thread(dag, fail_fast=False)
+
+        # Wait for the DAG to finish
+        time.sleep(1) # Adjust as needed
+
+        with orchestrator.status_manager as sm:
+            dag_execution_details = sm.get_dag_execution_details(dag.dag_id, execution_id)
+            assert dag_execution_details["status"] == "failed"
 
 def test_orchestrator_load_dag_with_start_time(orchestrator, dag_with_start_time_filepath):
     """Test loading a DAG with start_time parameter from YAML file."""

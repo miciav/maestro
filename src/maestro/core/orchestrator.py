@@ -109,9 +109,22 @@ class Orchestrator:
         
         def execute():
             try:
-                self.run_dag(dag, execution_id=execution_id, resume=resume, fail_fast=fail_fast, status_callback=status_callback)
+                self.run_dag(
+                    dag,
+                    execution_id=execution_id,
+                    resume=resume,
+                    fail_fast=fail_fast,
+                    status_callback=status_callback
+                )
+
+                # After execution, check the final status of tasks
                 with self.status_manager as sm:
-                    sm.update_dag_execution_status(dag.dag_id, execution_id, "completed")
+                    final_statuses = sm.get_dag_status(dag.dag_id)
+                    if any(status == "failed" for status in final_statuses.values()):
+                        sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
+                    else:
+                        sm.update_dag_execution_status(dag.dag_id, execution_id, "completed")
+
             except Exception as e:
                 with self.status_manager as sm:
                     sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
@@ -169,6 +182,20 @@ class Orchestrator:
                 for task_id in execution_order:
                     task = dag.tasks[task_id]
                     task_status = sm.get_task_status(dag_id, task.task_id)
+
+                    # Check if any dependencies have failed or been skipped
+                    dependencies_failed = any(
+                        dag.tasks[dep].status in [TaskStatus.FAILED, TaskStatus.SKIPPED] 
+                        for dep in task.dependencies
+                    )
+
+                    if dependencies_failed:
+                        task.status = TaskStatus.SKIPPED
+                        sm.set_task_status(dag_id, task.task_id, "skipped")
+                        if status_callback:
+                            status_callback()
+                        self.logger.warning(f"Skipping task {task.task_id} because its dependencies failed.")
+                        continue
 
                     if resume and task_status == "completed":
                         self.logger.info(f"Skipping already completed task: {task.task_id}")
@@ -253,7 +280,8 @@ class Orchestrator:
             TaskStatus.PENDING: "blue",
             TaskStatus.RUNNING: "yellow",
             TaskStatus.COMPLETED: "green",
-            TaskStatus.FAILED: "red"
+            TaskStatus.FAILED: "red",
+            TaskStatus.SKIPPED: "magenta"
         }
         return color_map.get(status, "white")
 
@@ -264,7 +292,8 @@ class Orchestrator:
             "pending": 0,
             "running": 0,
             "completed": 0,
-            "failed": 0
+            "failed": 0,
+            "skipped": 0
         }
 
         for task_id, task in dag.tasks.items():

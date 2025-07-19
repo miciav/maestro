@@ -65,9 +65,14 @@ def test_root(client):
     assert json_response["status"] == "running"
 
 def test_submit_dag_success(client, sample_dag):
-    with patch('maestro.server.app.orchestrator.load_dag_from_file', return_value=sample_dag):
-        with patch('maestro.server.app.orchestrator.run_dag_in_thread', return_value="test_execution_id") as mock_run:
-            response = client.post("/dags/submit", json={"dag_file_path": "path/to/dag.yaml", "resume": False, "fail_fast": True})
+    with patch('maestro.server.app.orchestrator.load_dag_from_file',
+               return_value=sample_dag):
+        with patch('maestro.server.app.orchestrator.run_dag_in_thread',
+                   return_value="test_execution_id") as mock_run:
+            response = client.post("/dags/submit",
+                                   json={"dag_file_path": "path/to/dag.yaml",
+                                         "resume": False,
+                                         "fail_fast": True})
             
             assert response.status_code == 200
             json_response = response.json()
@@ -75,7 +80,9 @@ def test_submit_dag_success(client, sample_dag):
             assert json_response["execution_id"] == "test_execution_id"
             assert json_response["status"] == "submitted"
             assert "submitted_at" in json_response
-            mock_run.assert_called_once_with(dag=sample_dag, resume=False, fail_fast=True)
+            mock_run.assert_called_once_with(dag=sample_dag,
+                                             resume=False,
+                                             fail_fast=True)
 
 def test_submit_dag_file_not_found(client):
     with patch('maestro.server.app.orchestrator.load_dag_from_file', side_effect=FileNotFoundError("DAG file not found")):

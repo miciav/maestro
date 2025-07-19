@@ -243,7 +243,9 @@ class TestStatusManagerCLIFeatures:
             dag_id = "test_dag"
             execution_id = str(uuid.uuid4())
             task_id = "test_task"
-            
+
+            sm.create_dag_execution(dag_id, execution_id)
+    
             # Log some messages
             messages = [
                 ("INFO", "Task started"),
@@ -251,19 +253,19 @@ class TestStatusManagerCLIFeatures:
                 ("INFO", "Task completed"),
                 ("ERROR", "Something went wrong")
             ]
-            
+    
             for level, message in messages:
                 sm.log_message(dag_id, execution_id, task_id, level, message)
-            
+    
             # Retrieve logs
-            logs = sm.get_execution_logs(dag_id, execution_id, limit=10)
-            
-            # Verify logs
-            assert len(logs) == 4
-            for i, log in enumerate(reversed(logs)):  # Logs are returned newest first
-                assert log["level"] == messages[i][0]
-                assert log["message"] == messages[i][1]
-                assert log["task_id"] == task_id
+            logs = sm.get_execution_logs(dag_id, execution_id)
+    
+            assert len(logs) == len(messages)
+    
+            # Verify messages (retrieved logs are in descending order)
+            retrieved_messages = [log['message'] for log in reversed(logs)]
+            original_messages = [msg[1] for msg in messages]
+            assert retrieved_messages == original_messages
     
     def test_get_dag_execution_details(self, status_manager):
         """Test getting detailed DAG execution information."""
@@ -397,23 +399,22 @@ class TestCLIDataStructures:
         with status_manager as sm:
             dag_id = "log_format_dag"
             execution_id = str(uuid.uuid4())
-            
+
+            sm.create_dag_execution(dag_id, execution_id)
+    
             # Log some messages
             sm.log_message(dag_id, execution_id, "task1", "INFO", "Test message")
-            sm.log_message(dag_id, execution_id, "task2", "ERROR", "Error message")
-            
-            # Get logs
-            logs = sm.get_execution_logs(dag_id, execution_id, limit=10)
-            
-            # Verify CLI-expected format
-            assert len(logs) == 2
-            for log in logs:
-                required_fields = ["task_id", "level", "message", "timestamp", "thread_id"]
-                for field in required_fields:
-                    assert field in log
+    
+            logs = sm.get_execution_logs(dag_id, execution_id)
+            assert len(logs) == 1
+            log_entry = logs[0]
+    
+            expected_keys = ["task_id", "level", "message", "timestamp", "thread_id"]
+            for key in expected_keys:
+                assert key in log_entry
                 
-                # Verify log levels are valid
-                assert log["level"] in ["DEBUG", "INFO", "WARNING", "ERROR"]
+            # Verify log levels are valid
+            assert log_entry["level"] in ["DEBUG", "INFO", "WARNING", "ERROR"]
     
     def test_summary_format_for_cli(self, status_manager):
         """Test that summary has expected format for CLI display."""

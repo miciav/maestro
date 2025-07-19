@@ -41,14 +41,18 @@ class MaestroAPIClient:
         response = self._make_request("GET", "/")
         return response.json()
     
-    def submit_dag(self, dag_file_path: str, resume: bool = False, fail_fast: bool = True) -> Dict[str, Any]:
+    def submit_dag(self, dag_file_path: str,
+                   resume: bool = False,
+                   fail_fast: bool = True) -> Dict[str, Any]:
         """Submit a DAG for execution"""
         data = {
             "dag_file_path": dag_file_path,
             "resume": resume,
             "fail_fast": fail_fast
         }
-        response = self._make_request("POST", "/dags/submit", json=data)
+        response = self._make_request(method="POST",
+                                      endpoint="/dags/submit",
+                                      json=data)
         return response.json()
     
     def get_dag_status(self, dag_id: str, execution_id: Optional[str] = None) -> Dict[str, Any]:

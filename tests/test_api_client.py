@@ -95,7 +95,9 @@ class TestMaestroAPIClient:
             status=200
         )
         
-        result = self.client.submit_dag("/path/to/dag.yaml", resume=True, fail_fast=False)
+        result = self.client.submit_dag("/path/to/dag.yaml",
+                                        resume=True,
+                                        fail_fast=False)
         
         assert result == self.mock_dag_response
         assert len(mock_responses.calls) == 1

@@ -46,7 +46,7 @@ def submit(
     check_server_connection()
     
     try:
-        # Convert relative path to absolute
+        # Convert a relative path to absolute
         dag_file_path = os.path.abspath(dag_file)
         
         if not os.path.exists(dag_file_path):
@@ -447,7 +447,9 @@ def stop_server():
 
 @server.command("status")
 def server_status(
-    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+    server_url: str = typer.Option("http://localhost:8000",
+                                   "--server",
+                                   help="Maestro server URL")
 ):
     """Check server status"""
     api_client.base_url = server_url
