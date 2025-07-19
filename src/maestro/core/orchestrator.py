@@ -102,10 +102,12 @@ class Orchestrator:
     ) -> str:
         """Execute DAG in a separate thread with concurrency."""
         execution_id = str(uuid.uuid4())
-        
-        # Create execution record in database
+        # Create execution record in database synchronously
         with self.status_manager as sm:
             sm.create_dag_execution(dag.dag_id, execution_id)
+            # Initialize all tasks with pending status
+            task_ids = list(dag.tasks.keys())
+            sm.initialize_tasks_for_execution(dag.dag_id, execution_id, task_ids)
         
         def execute():
             try:
@@ -119,20 +121,29 @@ class Orchestrator:
 
                 # After execution, check the final status of tasks
                 with self.status_manager as sm:
-                    final_statuses = sm.get_dag_status(dag.dag_id)
-                    if any(status == "failed" for status in final_statuses.values()):
+                    final_statuses = sm.get_dag_status(dag.dag_id, execution_id)
+                    
+                    # Count task statuses
+                    has_failed = any(status == "failed" for status in final_statuses.values())
+                    has_running = any(status == "running" for status in final_statuses.values())
+                    
+                    # Determine overall DAG status
+                    if has_running:
+                        # Should not happen after execution completes, but handle it
+                        sm.update_dag_execution_status(dag.dag_id, execution_id, "running")
+                    elif has_failed:
                         sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
                     else:
                         sm.update_dag_execution_status(dag.dag_id, execution_id, "completed")
 
             except Exception as e:
                 with self.status_manager as sm:
+                    # Mark any running or pending tasks as failed when DAG execution fails
+                    sm.mark_incomplete_tasks_as_failed(dag.dag_id, execution_id)
+                    
+                    # Update DAG execution status to failed
                     sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
-                    # Mark any running tasks as failed when DAG execution fails
-                    for task_id, task in dag.tasks.items():
-                        if task.status == TaskStatus.RUNNING:
-                            task.status = TaskStatus.FAILED
-                            sm.set_task_status(dag.dag_id, task_id, "failed")
+                    
                 self.logger.error(f"DAG {dag.dag_id} execution failed: {e}")
                 if fail_fast:
                     raise
@@ -177,11 +188,11 @@ class Orchestrator:
         try:
             with self.status_manager as sm:
                 if not resume:
-                    sm.reset_dag_status(dag_id)
+                    sm.reset_dag_status(dag_id, execution_id)
 
                 for task_id in execution_order:
                     task = dag.tasks[task_id]
-                    task_status = sm.get_task_status(dag_id, task.task_id)
+                    task_status = sm.get_task_status(dag_id, task.task_id, execution_id)
 
                     # Check if any dependencies have failed or been skipped
                     dependencies_failed = any(
@@ -191,7 +202,7 @@ class Orchestrator:
 
                     if dependencies_failed:
                         task.status = TaskStatus.SKIPPED
-                        sm.set_task_status(dag_id, task.task_id, "skipped")
+                        sm.set_task_status(dag_id, task.task_id, "skipped", execution_id)
                         if status_callback:
                             status_callback()
                         self.logger.warning(f"Skipping task {task.task_id} because its dependencies failed.")
@@ -200,8 +211,6 @@ class Orchestrator:
                     if resume and task_status == "completed":
                         self.logger.info(f"Skipping already completed task: {task.task_id}")
                         task.status = TaskStatus.COMPLETED
-                        if status_manager:
-                            status_manager.set_task_status(task.task_id, "completed")
                         if progress_tracker:
                             progress_tracker.increment_completed()
                         if status_callback:
@@ -210,9 +219,7 @@ class Orchestrator:
 
                     try:
                         task.status = TaskStatus.RUNNING
-                        sm.set_task_status(dag_id, task.task_id, "running")
-                        if status_manager:
-                            status_manager.set_task_status(task.task_id, "running")
+                        sm.set_task_status(dag_id, task.task_id, "running", execution_id)
                         if status_callback:
                             status_callback()
 
@@ -224,9 +231,7 @@ class Orchestrator:
                         executor_instance = self.executor_factory.get_executor(task.executor)
                         task.execute(executor_instance)
                         task.status = TaskStatus.COMPLETED
-                        sm.set_task_status(dag_id, task.task_id, "completed")
-                        if status_manager:
-                            status_manager.set_task_status(task.task_id, "completed")
+                        sm.set_task_status(dag_id, task.task_id, "completed", execution_id)
                         if progress_tracker:
                             progress_tracker.increment_completed()
                         if status_callback:
@@ -235,9 +240,7 @@ class Orchestrator:
 
                     except Exception as e:
                         task.status = TaskStatus.FAILED
-                        sm.set_task_status(dag_id, task.task_id, "failed")
-                        if status_manager:
-                            status_manager.set_task_status(task.task_id, "failed")
+                        sm.set_task_status(dag_id, task.task_id, "failed", execution_id)
                         if status_callback:
                             status_callback()
 

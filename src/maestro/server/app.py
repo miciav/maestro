@@ -151,6 +151,7 @@ async def lifespan(app: FastAPI):
     import os
     # Use absolute path to ensure consistency
     db_path = os.path.abspath("maestro.db")
+    logger.info(f"[DEBUG] Initializing Maestro server with database: {db_path}") # Added debug log
     orchestrator = Orchestrator(log_level="INFO", db_path=db_path)
     orchestrator.disable_rich_logging()  # Disable rich logging for server mode
     

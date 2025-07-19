@@ -41,21 +41,7 @@ class StatusManager:
             )
         """)
 
-        # Main table for tasks
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS tasks (
-                id TEXT,
-                dag_id TEXT,
-                status TEXT,
-                started_at TIMESTAMP,
-                completed_at TIMESTAMP,
-                thread_id TEXT,
-                PRIMARY KEY (id, dag_id),
-                FOREIGN KEY (dag_id) REFERENCES dags(id) ON DELETE CASCADE
-            )
-        """)
-
-        # Main table for executions
+        # Main table for executions (must be created before tasks)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS executions (
                 id TEXT,
@@ -67,6 +53,22 @@ class StatusManager:
                 pid INTEGER,
                 PRIMARY KEY (id, dag_id),
                 FOREIGN KEY (dag_id) REFERENCES dags(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Main table for tasks (references executions table)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT,
+                dag_id TEXT,
+                execution_id TEXT,
+                status TEXT,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                thread_id TEXT,
+                PRIMARY KEY (id, dag_id, execution_id),
+                FOREIGN KEY (dag_id) REFERENCES dags(id) ON DELETE CASCADE,
+                FOREIGN KEY (execution_id, dag_id) REFERENCES executions(id, dag_id) ON DELETE CASCADE
             )
         """)
 
@@ -103,51 +105,60 @@ class StatusManager:
                 if status == "running":
                     self._conn.execute("""
                         INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, status, started_at, thread_id)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, status, current_time, str(thread_id)))
+                        (id, dag_id, execution_id, status, started_at, thread_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (task_id, dag_id, execution_id, status, current_time, str(thread_id)))
                 elif status in ["completed", "failed"]:
                     cursor = self._conn.execute(
-                        "SELECT started_at FROM tasks WHERE id = ? AND dag_id = ?", 
-                        (task_id, dag_id)
+                        "SELECT started_at FROM tasks WHERE id = ? AND dag_id = ? AND execution_id = ?", 
+                        (task_id, dag_id, execution_id)
                     )
                     row = cursor.fetchone()
                     started_at = row[0] if row else current_time
                     
                     self._conn.execute("""
                         INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, status, started_at, completed_at, thread_id)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, status, started_at, current_time, str(thread_id)))
+                        (id, dag_id, execution_id, status, started_at, completed_at, thread_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (task_id, dag_id, execution_id, status, started_at, current_time, str(thread_id)))
                 else:
                     self._conn.execute("""
                         INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, status, thread_id)
-                        VALUES (?, ?, ?, ?)
-                    """, (task_id, dag_id, status, str(thread_id)))
+                        (id, dag_id, execution_id, status, thread_id)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (task_id, dag_id, execution_id, status, str(thread_id)))
 
-    def get_task_status(self, dag_id: str, task_id: str) -> Optional[str]:
+    def get_task_status(self, dag_id: str, task_id: str, execution_id: str = None) -> Optional[str]:
         """Get task status with thread safety."""
         with self._lock:
             with self._conn:
-                cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ?", (dag_id, task_id))
+                if execution_id:
+                    cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ? AND execution_id = ?", (dag_id, task_id, execution_id))
+                else:
+                    cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ?", (dag_id, task_id))
                 row = cursor.fetchone()
                 return row[0] if row else None
 
-    def get_dag_status(self, dag_id: str) -> Dict[str, str]:
+    def get_dag_status(self, dag_id: str, execution_id: str = None) -> Dict[str, str]:
         """Get DAG status with thread safety."""
         with self._lock:
             with self._conn:
-                cursor = self._conn.execute("SELECT id, status FROM tasks WHERE dag_id = ?", (dag_id,))
+                if execution_id:
+                    cursor = self._conn.execute("SELECT id, status FROM tasks WHERE dag_id = ? AND execution_id = ?", (dag_id, execution_id))
+                else:
+                    cursor = self._conn.execute("SELECT id, status FROM tasks WHERE dag_id = ?", (dag_id,))
                 return {row[0]: row[1] for row in cursor.fetchall()}
 
     def reset_dag_status(self, dag_id: str, execution_id: str = None):
         """Reset DAG status with thread safety."""
         with self._lock:
             with self._conn:
-                self._conn.execute("DELETE FROM tasks WHERE dag_id = ?", (dag_id,))
                 if execution_id:
-                    self._conn.execute("DELETE FROM executions WHERE dag_id = ? AND id = ?", (dag_id, execution_id))
+                    # Only delete tasks for this execution, not the execution itself
+                    self._conn.execute("DELETE FROM tasks WHERE dag_id = ? AND execution_id = ?", (dag_id, execution_id))
+                else:
+                    self._conn.execute("DELETE FROM tasks WHERE dag_id = ?", (dag_id,))
+                    self._conn.execute("DELETE FROM executions WHERE dag_id = ?", (dag_id,))
 
     def create_dag_execution(self, dag_id: str, execution_id: str) -> str:
         """Create a new DAG execution record."""
@@ -163,8 +174,22 @@ class StatusManager:
                     (id, dag_id, status, started_at, thread_id, pid)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (execution_id, dag_id, "running", current_time, str(thread_id), pid))
+                self._conn.commit()
             
             return execution_id
+    
+    def initialize_tasks_for_execution(self, dag_id: str, execution_id: str, task_ids: List[str]):
+        """Initialize all tasks for a DAG execution with pending status."""
+        with self._lock:
+            thread_id = threading.current_thread().ident
+            
+            with self._conn:
+                for task_id in task_ids:
+                    self._conn.execute("""
+                        INSERT OR IGNORE INTO tasks 
+                        (id, dag_id, execution_id, status, thread_id)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (task_id, dag_id, execution_id, "pending", str(thread_id)))
 
     def update_dag_execution_status(self, dag_id: str,
                                     execution_id: str,
@@ -186,6 +211,20 @@ class StatusManager:
                         SET status = ?
                         WHERE dag_id = ? AND id = ?
                     """, (status, dag_id, execution_id))
+    
+    def mark_incomplete_tasks_as_failed(self, dag_id: str, execution_id: str):
+        """Mark all running or pending tasks as failed for a given execution."""
+        with self._lock:
+            current_time = datetime.now().isoformat()
+            thread_id = threading.current_thread().ident
+            
+            with self._conn:
+                # Update all running/pending tasks to failed
+                self._conn.execute("""
+                    UPDATE tasks 
+                    SET status = 'failed', completed_at = ?, thread_id = ?
+                    WHERE dag_id = ? AND execution_id = ? AND status IN ('running', 'pending')
+                """, (current_time, str(thread_id), dag_id, execution_id))
 
     def get_running_dags(self) -> List[Dict[str, Any]]:
         """Get all currently running DAGs."""
@@ -305,7 +344,7 @@ class StatusManager:
                 placeholders = ",".join("?" * len(executions_to_delete))
 
                 self._conn.execute(f"DELETE FROM logs WHERE execution_id IN ({placeholders})", executions_to_delete)
-                self._conn.execute(f"DELETE FROM tasks WHERE dag_id IN (SELECT dag_id FROM executions WHERE id IN ({placeholders}))", executions_to_delete)
+                self._conn.execute(f"DELETE FROM tasks WHERE execution_id IN ({placeholders})", executions_to_delete)
                 self._conn.execute(f"DELETE FROM executions WHERE id IN ({placeholders})", executions_to_delete)
 
                 # Optional: Clean up DAGs that have no executions left
@@ -363,9 +402,9 @@ class StatusManager:
                 task_cursor = self._conn.execute("""
                     SELECT id, status, started_at, completed_at, thread_id
                     FROM tasks 
-                    WHERE dag_id = ?
+                    WHERE dag_id = ? AND execution_id = ?
                     ORDER BY started_at
-                """, (dag_id,))
+                """, (dag_id, execution_id))
                 
                 tasks = [{
                     "task_id": row[0],
