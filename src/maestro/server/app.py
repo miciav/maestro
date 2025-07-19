@@ -144,9 +144,44 @@ class RunningDAGsResponse(BaseModel):
     running_dags: List[Dict[str, Any]]
     count: int
 
+from rich.console import Console
+from rich.text import Text
+from PIL import Image
+import os
+
+def print_logo():
+    """Prints the Maestro logo as colored block art."""
+    try:
+        console = Console()
+        logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "docs", "maestro-icon.png"))
+
+        if not os.path.exists(logo_path):
+            logger.warning(f"Logo file not found at {logo_path}. Skipping logo.")
+            return
+
+        img = Image.open(logo_path).convert("RGBA")
+        img = img.resize((40, 20), Image.Resampling.LANCZOS)  # Resize for a reasonable terminal display
+
+        for y in range(img.height):
+            for x in range(img.width):
+                r, g, b, a = img.getpixel((x, y))
+                if a > 128:  # Only print opaque pixels
+                    console.print("█", style=f"rgb({r},{g},{b})", end="")
+                else:
+                    console.print(" ", end="")
+            console.print()
+        console.print("\n[bold green]Maestro Server Initialized[/bold green]")
+
+    except ImportError:
+        console.print("\n[bold green]Maestro Server Initialized[/bold green]")
+        logger.warning("Pillow library not found. Please install it to see the logo.")
+    except Exception as e:
+        logger.error(f"Could not print logo: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    print_logo()  # Print the logo at startup
     global orchestrator
     import os
     # Use absolute path to ensure consistency
@@ -163,6 +198,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Maestro server started with database: {db_path}")
     
     yield
+
     
     # Shutdown
     logger.info("Maestro server shutting down")
