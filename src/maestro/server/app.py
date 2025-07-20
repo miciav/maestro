@@ -12,7 +12,7 @@ from datetime import datetime
 import logging
 import threading
 from contextlib import asynccontextmanager
-
+from maestro.core.dag import DAG
 from maestro.core.orchestrator import Orchestrator
 from maestro.core.status_manager import StatusManager
 
@@ -106,7 +106,8 @@ async def lifespan(app: FastAPI):
     # Use absolute path to ensure consistency
     db_path = os.path.abspath("maestro.db")
     logger.info(f"[DEBUG] Initializing Maestro server with database: {db_path}") # Added debug log
-    orchestrator = Orchestrator(log_level="INFO", db_path=db_path)
+    status_manager = StatusManager(db_path)
+    orchestrator = Orchestrator(log_level="INFO", status_manager=status_manager)
     orchestrator.disable_rich_logging()  # Disable rich logging for server mode
     
     # Pass the orchestrator instance to the Docker API module
@@ -153,7 +154,7 @@ async def submit_dag(request: DAGSubmissionRequest, background_tasks: Background
     try:
         # Generate or check provided DAG ID
         if request.dag_id is not None:
-            dag_id = request.dag_id.strip()
+            dag_id: str = request.dag_id.strip()
             
             # Validate DAG ID format
             with orchestrator.status_manager as sm:
@@ -171,16 +172,16 @@ async def submit_dag(request: DAGSubmissionRequest, background_tasks: Background
                     )
         else:
             with orchestrator.status_manager as sm:
-                dag_id = sm.generate_unique_dag_id()
+                dag_id: str = sm.generate_unique_dag_id()
 
         # Load and validate DAG
-        dag = orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
+        dag: DAG = orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
         
         # Start DAG execution in background
         execution_id = orchestrator.run_dag_in_thread(
             dag=dag,
             resume=request.resume,
-            fail_fast=request.fail_fast
+            fail_fast=request.fail_fast 
         )
         
         return DAGSubmissionResponse(
@@ -199,7 +200,7 @@ async def get_dag_status(dag_id: str, execution_id: Optional[str] = None):
     """Get status of a specific DAG execution"""
     try:
         with orchestrator.status_manager as sm:
-            exec_details = sm.get_dag_execution_details(dag_id, execution_id)
+            exec_details: dict[str, Any]   = sm.get_dag_execution_details(dag_id, execution_id)
             
             if not exec_details:
                 raise HTTPException(status_code=404, detail=f"DAG execution not found: {dag_id}")

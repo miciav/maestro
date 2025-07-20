@@ -1,0 +1,18 @@
+dag:
+  name: "simple_test_dag"
+  tasks:
+    - task_id: "task1"
+      type: "PrintTask"
+      params:
+        message: "Task 1 executed"
+      dependencies: []
+    - task_id: "task2"
+      type: "WaitTask"
+      params:
+        wait_seconds: 1
+      dependencies: ["task1"]
+    - task_id: "task3"
+      type: "PrintTask"
+      params:
+        message: "Task 3 executed"
+      dependencies: ["task2"]

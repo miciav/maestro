@@ -60,7 +60,16 @@ class StatusManager:
                 conn.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode for better concurrency
                 conn.execute("PRAGMA foreign_keys = ON") # Enable foreign key support
                 self._create_tables_in_connection(conn)
+                self._migrate_db_if_needed(conn)
             StatusManager._tables_initialized[self.db_path] = True
+
+    def _migrate_db_if_needed(self, conn):
+        """Check for and apply database migrations."""
+        cursor = conn.execute("PRAGMA table_info(tasks)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'insertion_order' not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN insertion_order INTEGER")
+            conn.commit()
 
     def __enter__(self):
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -108,6 +117,7 @@ class StatusManager:
                 started_at TIMESTAMP,
                 completed_at TIMESTAMP,
                 thread_id TEXT,
+                insertion_order INTEGER,
                 PRIMARY KEY (id, dag_id, execution_id),
                 FOREIGN KEY (dag_id) REFERENCES dags(id) ON DELETE CASCADE,
                 FOREIGN KEY (execution_id, dag_id) REFERENCES executions(id, dag_id) ON DELETE CASCADE
@@ -154,12 +164,20 @@ class StatusManager:
                 """, (execution_id, dag_id, "running", current_time, str(thread_id), str(thread_id)))
             
             with self._conn:
+                # Get insertion_order if it exists
+                cursor = self._conn.execute(
+                    "SELECT insertion_order FROM tasks WHERE id = ? AND dag_id = ? AND execution_id = ?",
+                    (task_id, dag_id, execution_id)
+                )
+                row = cursor.fetchone()
+                insertion_order = row[0] if row and row[0] is not None else None
+
                 if status == "running":
                     self._conn.execute("""
                         INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, execution_id, status, started_at, thread_id)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, execution_id, status, current_time, str(thread_id)))
+                        (id, dag_id, execution_id, status, started_at, thread_id, insertion_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (task_id, dag_id, execution_id, status, current_time, str(thread_id), insertion_order))
                 elif status in ["completed", "failed"]:
                     cursor = self._conn.execute(
                         "SELECT started_at FROM tasks WHERE id = ? AND dag_id = ? AND execution_id = ?", 
@@ -170,15 +188,15 @@ class StatusManager:
                     
                     self._conn.execute("""
                         INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, execution_id, status, started_at, completed_at, thread_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, execution_id, status, started_at, current_time, str(thread_id)))
+                        (id, dag_id, execution_id, status, started_at, completed_at, thread_id, insertion_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (task_id, dag_id, execution_id, status, started_at, current_time, str(thread_id), insertion_order))
                 else:
                     self._conn.execute("""
                         INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, execution_id, status, thread_id)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, execution_id, status, str(thread_id)))
+                        (id, dag_id, execution_id, status, thread_id, insertion_order)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (task_id, dag_id, execution_id, status, str(thread_id), insertion_order))
                 
                 # Explicitly commit the transaction
                 self._conn.commit()
@@ -247,12 +265,12 @@ class StatusManager:
             thread_id = threading.current_thread().ident
             
             with self._conn:
-                for task_id in task_ids:
+                for i, task_id in enumerate(task_ids):
                     self._conn.execute("""
                         INSERT OR IGNORE INTO tasks 
-                        (id, dag_id, execution_id, status, thread_id)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, execution_id, "pending", str(thread_id)))
+                        (id, dag_id, execution_id, status, thread_id, insertion_order)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (task_id, dag_id, execution_id, "pending", str(thread_id), i))
 
     def update_dag_execution_status(self, dag_id: str,
                                     execution_id: str,
@@ -478,7 +496,7 @@ class StatusManager:
                     SELECT id, status, started_at, completed_at, thread_id
                     FROM tasks 
                     WHERE dag_id = ? AND execution_id = ?
-                    ORDER BY started_at
+                    ORDER BY insertion_order
                 """, (dag_id, execution_id))
                 
                 tasks = [{
@@ -593,4 +611,3 @@ class StatusManager:
             with self._conn:
                 cursor = self._conn.execute("DELETE FROM dags WHERE id = ?", (dag_id,))
                 return cursor.rowcount
-

@@ -18,29 +18,28 @@ from maestro.core.executors.factory import ExecutorFactory
 
 class DatabaseLogHandler(logging.Handler):
     """Custom logging handler that writes to StatusManager database."""
-    
-    def __init__(self, db_path: str):
+
+    def __init__(self, status_manager: StatusManager):
         super().__init__()
-        self.db_path = db_path
+        self.status_manager = status_manager
         self.current_dag_id = None
         self.current_execution_id = None
         self.current_task_id = None
-    
+
     def set_context(self, dag_id: str, execution_id: str, task_id: str = None):
         """Set the current execution context for logging."""
         self.current_dag_id = dag_id
         self.current_execution_id = execution_id
         self.current_task_id = task_id
-    
+
     def emit(self, record):
         """Emit a log record to the database."""
         if self.current_dag_id and self.current_execution_id:
             try:
                 log_entry = self.format(record)
-                
-                # Use a separate StatusManager instance to avoid connection conflicts
-                temp_sm = StatusManager(self.db_path)
-                with temp_sm as sm:
+
+                # Use the provided StatusManager instance
+                with self.status_manager as sm:
                     sm.log_message(
                         dag_id=self.current_dag_id,
                         execution_id=self.current_execution_id,
@@ -54,11 +53,17 @@ class DatabaseLogHandler(logging.Handler):
 
 
 class Orchestrator:
-    def __init__(self, log_level: str = "INFO", db_path: str = "maestro.db"):
+    def __init__(self, log_level: str = "INFO", status_manager: Optional[StatusManager] = None, db_path: Optional[str] = "maestro.db"):
         self.task_registry = TaskRegistry()
         self.dag_loader = DAGLoader(self.task_registry)
         self.console = get_console()
-        self.status_manager = StatusManager(db_path)
+        if status_manager:
+            self.status_manager = status_manager
+        elif db_path:
+            self.status_manager = StatusManager(db_path)
+        else:
+            # This case should ideally not be hit if db_path has a default value.
+            self.status_manager = StatusManager()
         self.executor_factory = ExecutorFactory()
         self._setup_logging(log_level)
 
@@ -73,12 +78,12 @@ class Orchestrator:
         )
         self.logger = logging.getLogger(__name__)
         self.rich_handler = logging.getLogger().handlers[0]  # Store reference to rich handler
-    
+
     def disable_rich_logging(self):
         """Disable rich logging for async execution."""
         if hasattr(self, 'rich_handler'):
             logging.getLogger().removeHandler(self.rich_handler)
-    
+
     def enable_rich_logging(self):
         """Re-enable rich logging."""
         if hasattr(self, 'rich_handler'):
@@ -94,9 +99,9 @@ class Orchestrator:
         return self.dag_loader.load_dag_from_file(filepath, dag_id=dag_id)
 
     def run_dag_in_thread(
-        self, 
-        dag: DAG, 
-        resume: bool = False, 
+        self,
+        dag: DAG,
+        resume: bool = False,
         fail_fast: bool = True,
         status_callback=None
     ) -> str:
@@ -109,7 +114,7 @@ class Orchestrator:
             if not resume:
                 task_ids = list(dag.tasks.keys())
                 sm.initialize_tasks_for_execution(dag.dag_id, execution_id, task_ids)
-        
+
         def execute():
             try:
                 self.run_dag(
@@ -123,11 +128,11 @@ class Orchestrator:
                 # After execution, check the final status of tasks
                 with self.status_manager as sm:
                     final_statuses = sm.get_dag_status(dag.dag_id, execution_id)
-                    
+
                     # Count task statuses
                     has_failed = any(status == "failed" for status in final_statuses.values())
                     has_running = any(status == "running" for status in final_statuses.values())
-                    
+
                     # Determine overall DAG status
                     if has_running:
                         # Should not happen after execution completes, but handle it
@@ -141,10 +146,10 @@ class Orchestrator:
                 with self.status_manager as sm:
                     # Mark any running or pending tasks as failed when DAG execution fails
                     sm.mark_incomplete_tasks_as_failed(dag.dag_id, execution_id)
-                    
+
                     # Update DAG execution status to failed
                     sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
-                    
+
                 self.logger.error(f"DAG {dag.dag_id} execution failed: {e}")
                 if fail_fast:
                     raise
@@ -153,13 +158,13 @@ class Orchestrator:
         return execution_id
 
     def run_dag(
-        self, 
-        dag: DAG, 
+        self,
+        dag: DAG,
         execution_id: str = None,
-        resume: bool = False, 
-        fail_fast: bool = True, 
-        status_manager=None, 
-        progress_tracker=None, 
+        resume: bool = False,
+        fail_fast: bool = True,
+        status_manager=None,
+        progress_tracker=None,
         status_callback=None
     ):
         """Execute DAG with improved error handling and persistence."""
@@ -169,9 +174,9 @@ class Orchestrator:
         # Set up database logging if execution_id is provided
         db_handler = None
         if execution_id:
-            db_handler = DatabaseLogHandler(self.status_manager.db_path)
+            db_handler = DatabaseLogHandler(self.status_manager)
             db_handler.set_context(dag_id, execution_id)
-            
+
             # Add the database handler to all task-related loggers
             task_loggers = [
                 'maestro.tasks.terraform_task',
@@ -181,15 +186,14 @@ class Orchestrator:
                 'maestro.core.executors.docker',
                 'maestro.core.executors.local'
             ]
-            
+
             for logger_name in task_loggers:
                 logger = logging.getLogger(logger_name)
                 logger.addHandler(db_handler)
 
         try:
             with self.status_manager as sm:
-                if not resume:
-                    sm.reset_dag_status(dag_id, execution_id)
+                
 
                 for task_id in execution_order:
                     task = dag.tasks[task_id]
@@ -197,7 +201,7 @@ class Orchestrator:
 
                     # Check if any dependencies have failed or been skipped
                     dependencies_failed = any(
-                        dag.tasks[dep].status in [TaskStatus.FAILED, TaskStatus.SKIPPED] 
+                        dag.tasks[dep].status in [TaskStatus.FAILED, TaskStatus.SKIPPED]
                         for dep in task.dependencies
                     )
 
