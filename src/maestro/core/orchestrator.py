@@ -7,7 +7,7 @@ from typing import Any, Type, Dict, Optional
 from rich import get_console
 from rich.logging import RichHandler
 
-from maestro.core.dag import DAG
+from maestro.core.dag import DAG, DAGStatus
 from maestro.core.task import TaskStatus
 from maestro.tasks.base import BaseTask
 from maestro.core.Task_Registry import TaskRegistry
@@ -101,15 +101,29 @@ class Orchestrator:
     def run_dag_in_thread(
         self,
         dag: DAG,
+        execution_id: str = None,
         resume: bool = False,
         fail_fast: bool = True,
         status_callback=None
     ) -> str:
         """Execute DAG in a separate thread with concurrency."""
-        execution_id = str(uuid.uuid4())
-        # Create execution record in database synchronously
+        # Use provided execution_id or generate a new one
+        if execution_id is None:
+            execution_id = str(uuid.uuid4())
+        
+        dag.execution_id = execution_id
+        
+        # Create or update execution record in database synchronously
         with self.status_manager as sm:
-            sm.create_dag_execution(dag.dag_id, execution_id)
+            # Check if execution already exists (e.g., with 'created' status)
+            existing = sm.get_latest_execution(dag.dag_id)
+            if existing and existing["execution_id"] == execution_id:
+                # Update existing execution to 'running'
+                sm.update_dag_execution_status(dag.dag_id, execution_id, "running")
+            else:
+                # Create new execution
+                sm.create_dag_execution(dag.dag_id, execution_id)
+            
             # Initialize all tasks with pending status only if not resuming
             if not resume:
                 task_ids = list(dag.tasks.keys())
@@ -136,14 +150,18 @@ class Orchestrator:
                     # Determine overall DAG status
                     if has_running:
                         # Should not happen after execution completes, but handle it
+                        dag.status = DAGStatus.RUNNING
                         sm.update_dag_execution_status(dag.dag_id, execution_id, "running")
                     elif has_failed:
+                        dag.status = DAGStatus.FAILED
                         sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
                     else:
+                        dag.status = DAGStatus.COMPLETED
                         sm.update_dag_execution_status(dag.dag_id, execution_id, "completed")
 
             except Exception as e:
                 with self.status_manager as sm:
+                    dag.status = DAGStatus.FAILED
                     # Mark any running or pending tasks as failed when DAG execution fails
                     sm.mark_incomplete_tasks_as_failed(dag.dag_id, execution_id)
 
@@ -169,6 +187,7 @@ class Orchestrator:
     ):
         """Execute DAG with improved error handling and persistence."""
         dag_id = dag.dag_id
+        dag.status = DAGStatus.RUNNING
         execution_order = dag.get_execution_order()
 
         # Set up database logging if execution_id is provided

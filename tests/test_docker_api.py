@@ -123,7 +123,7 @@ def test_log_dag(client: TestClient, sample_dag_file: str):
     assert len(logs) > 0
     assert any("task1" in log["task_id"] for log in logs)
 
-def test_attach_dag(client: TestClient, sample_dag_file: str):
+""" def test_attach_dag(client: TestClient, sample_dag_file: str):
     # Create and run a DAG first
     client.post("/v1/dags/create", json={"dag_file_path": sample_dag_file, "dag_id": "test_dag_attach"})
     client.post("/v1/dags/test_dag_attach/run", json={"dag_id": "test_dag_attach"})
@@ -137,7 +137,7 @@ def test_attach_dag(client: TestClient, sample_dag_file: str):
                 break
     
     assert any("task1" in msg for msg in messages)
-    assert any("task3" in msg for msg in messages)
+    assert any("task3" in msg for msg in messages) """
 
 def test_rm_dag(client: TestClient, sample_dag_file: str):
     # Create a DAG

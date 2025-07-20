@@ -259,6 +259,33 @@ class StatusManager:
             
             return execution_id
     
+    def create_dag_execution_with_status(self, dag_id: str, execution_id: str, status: str) -> str:
+        """Create a new DAG execution record with a specific status."""
+        with self._lock:
+            self._create_dag_if_not_exists(dag_id)
+            current_time = datetime.now().isoformat()
+            thread_id = threading.current_thread().ident
+            pid = threading.current_thread().ident
+            
+            with self._conn:
+                if status == "created":
+                    # For created status, don't set started_at or thread_id
+                    self._conn.execute("""
+                        INSERT OR REPLACE INTO executions 
+                        (id, dag_id, status, started_at, thread_id, pid)
+                        VALUES (?, ?, ?, NULL, NULL, ?)
+                    """, (execution_id, dag_id, status, pid))
+                else:
+                    # For other statuses, set started_at
+                    self._conn.execute("""
+                        INSERT OR REPLACE INTO executions 
+                        (id, dag_id, status, started_at, thread_id, pid)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (execution_id, dag_id, status, current_time, str(thread_id), pid))
+                self._conn.commit()
+            
+            return execution_id
+    
     def initialize_tasks_for_execution(self, dag_id: str, execution_id: str, task_ids: List[str]):
         """Initialize all tasks for a DAG execution with pending status."""
         with self._lock:
@@ -278,6 +305,7 @@ class StatusManager:
         """Update DAG execution status."""
         with self._lock:
             current_time = datetime.now().isoformat()
+            thread_id = threading.current_thread().ident
             
             with self._conn:
                 if status in ["completed", "failed", "cancelled"]:
@@ -286,6 +314,15 @@ class StatusManager:
                         SET status = ?, completed_at = ?
                         WHERE dag_id = ? AND id = ?
                     """, (status, current_time, dag_id, execution_id))
+                elif status == "running":
+                    # When transitioning to running, set thread_id and started_at if not already set
+                    self._conn.execute("""
+                        UPDATE executions 
+                        SET status = ?, 
+                            thread_id = CASE WHEN thread_id IS NULL THEN ? ELSE thread_id END,
+                            started_at = CASE WHEN started_at IS NULL THEN ? ELSE started_at END
+                        WHERE dag_id = ? AND id = ?
+                    """, (status, str(thread_id), current_time, dag_id, execution_id))
                 else:
                     self._conn.execute("""
                         UPDATE executions 
@@ -585,6 +622,29 @@ class StatusManager:
         base_name = f"{random.choice(DOCKER_ADJECTIVES)}_{random.choice(DOCKER_NOUNS)}"
         suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
         return f"{base_name}_{suffix}"
+
+    def get_latest_execution(self, dag_id: str) -> Optional[Dict[str, Any]]:
+        """Get the latest execution for a DAG."""
+        with self._lock:
+            with self._conn:
+                cursor = self._conn.execute("""
+                    SELECT id, status, started_at, completed_at, thread_id, pid
+                    FROM executions 
+                    WHERE dag_id = ?
+                    ORDER BY COALESCE(started_at, datetime('now')) DESC
+                    LIMIT 1
+                """, (dag_id,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "execution_id": row[0],
+                        "status": row[1],
+                        "started_at": row[2],
+                        "completed_at": row[3],
+                        "thread_id": row[4],
+                        "pid": row[5]
+                    }
+                return None
 
     def save_dag_definition(self, dag):
         """Save the DAG definition to the database."""

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import asyncio
 import json
+import uuid
 
 from maestro.core.orchestrator import Orchestrator
 from maestro.core.status_manager import StatusManager
@@ -83,8 +84,13 @@ async def create_dag(request: DAGCreateRequest):
         # Load and validate DAG
         dag = orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
         
+        # Create a new execution ID
+        execution_id = str(uuid.uuid4())
+        
         with orchestrator.status_manager as sm:
             sm.save_dag_definition(dag)
+            # Create initial execution with 'created' status
+            sm.create_dag_execution_with_status(dag_id, execution_id, "created")
 
         return DAGCreateResponse(
             dag_id=dag.dag_id,
@@ -103,11 +109,23 @@ async def run_dag(dag_id: str, request: DAGRunRequest, background_tasks: Backgro
             dag_definition = sm.get_dag_definition(dag_id)
             if not dag_definition:
                 raise HTTPException(status_code=404, detail=f"DAG '{dag_id}' not found.")
+            
+            # Get the latest execution for this DAG
+            latest_execution = sm.get_latest_execution(dag_id)
+            
+            if latest_execution and latest_execution["status"] == "created":
+                # Use the existing execution ID from the created DAG
+                execution_id = latest_execution["execution_id"]
+            else:
+                # Create a new execution ID for subsequent runs
+                execution_id = str(uuid.uuid4())
 
         dag = orchestrator.dag_loader.load_dag_from_dict(dag_definition)
-
-        execution_id = orchestrator.run_dag_in_thread(
+        
+        # Run the DAG with the determined execution ID
+        orchestrator.run_dag_in_thread(
             dag=dag,
+            execution_id=execution_id,
             resume=request.resume,
             fail_fast=request.fail_fast
         )

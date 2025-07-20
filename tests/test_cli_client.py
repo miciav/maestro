@@ -95,6 +95,10 @@ class TestCliClient:
 
         result = self.runner.invoke(app, ['submit', temp_dag_file])
 
+        print(f"Exit code: {result.exit_code}")
+        print(f"Output: {result.output}")
+        print(f"Exception: {result.exception}")
+        
         assert result.exit_code == 1
         assert "Error: Server error" in result.output
 

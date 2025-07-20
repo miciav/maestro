@@ -3,8 +3,18 @@ from typing import Dict, List, Optional, Union
 from collections import deque
 from datetime import datetime
 from croniter import croniter
+from enum import Enum
 
 from maestro.core.task import Task
+
+
+class DAGStatus(str, Enum):
+    """Enumeration for the status of a DAG."""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
 
 class DAG:
     def __init__(self, dag_id: str = "default_dag", start_time: Optional[datetime] = None, cron_schedule: Optional[str] = None):
@@ -12,6 +22,8 @@ class DAG:
         self.start_time = start_time
         self.cron_schedule = cron_schedule
         self.tasks: Dict[str, Task] = {}
+        self.status: DAGStatus = DAGStatus.PENDING
+        self.execution_id: Optional[str] = None
         
         # Validate that only one scheduling method is used
         if start_time is not None and cron_schedule is not None:

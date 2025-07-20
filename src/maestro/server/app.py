@@ -79,7 +79,7 @@ def print_logo():
             return
 
         img = Image.open(logo_path).convert("RGBA")
-        img = img.resize((40, 20), Image.Resampling.LANCZOS)  # Resize for a reasonable terminal display
+        img = img.resize((37, 15), Image.Resampling.LANCZOS)  # Resize for a reasonable terminal display
 
         for y in range(img.height):
             for x in range(img.width):
