@@ -141,8 +141,14 @@ class StatusManager:
 
     def mark_incomplete_tasks_as_failed(self, dag_id: str, execution_id: str):
         with self.Session.begin() as session:
-            session.query(TaskORM).filter(TaskORM.dag_id == dag_id, TaskORM.execution_id == execution_id, TaskORM.status.in_(["running", "pending"]))
-                .update({TaskORM.status: "failed", TaskORM.completed_at: datetime.now()}, synchronize_session=False)
+            session.query(TaskORM).filter(
+                TaskORM.dag_id == dag_id, 
+                TaskORM.execution_id == execution_id, 
+                TaskORM.status.in_(["running", "pending"])
+            ).update(
+                {TaskORM.status: "failed", TaskORM.completed_at: datetime.now()},
+                synchronize_session=False
+            )
 
     def get_running_dags(self) -> List[Dict[str, Any]]:
         with self.Session() as session:
