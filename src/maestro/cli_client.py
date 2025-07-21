@@ -98,6 +98,37 @@ def run(
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
 
+@app.command()
+def validate(
+    dag_file: str = typer.Argument(..., help="Path to the DAG YAML file"),
+    server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
+):
+    """Validate a DAG file without executing it"""
+    api_client.base_url = server_url
+    check_server_connection()
+
+    try:
+        dag_file_path = os.path.abspath(dag_file)
+        if not os.path.exists(dag_file_path):
+            console.print(f"[red]Error: DAG file not found: {dag_file_path}[/red]")
+            raise typer.Exit(1)
+
+        response = api_client.validate_dag(dag_file_path)
+        if response["valid"]:
+            console.print(f"[bold green]✓ DAG is valid: {response['dag_id']}[/bold green]")
+            console.print(f"[cyan]Total tasks:[/cyan] {response['total_tasks']}")
+            if response["tasks"]:
+                console.print("[bold blue]Tasks:[/bold blue]")
+                for task in response["tasks"]:
+                    deps = f" (dependencies: {', '.join(task['dependencies'])})" if task['dependencies'] else ""
+                    console.print(f"  • {task['task_id']} ({task['type']}){deps}")
+        else:
+            console.print(f"[bold red]✗ DAG validation failed: {response['error']}[/bold red]")
+            raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
 
 @app.command()
 def status(

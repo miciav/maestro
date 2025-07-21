@@ -37,7 +37,6 @@ class DatabaseLogHandler(logging.Handler):
         if self.current_dag_id and self.current_execution_id:
             try:
                 log_entry = self.format(record)
-
                 # Use the provided StatusManager instance
                 with self.status_manager as sm:
                     sm.log_message(
@@ -76,18 +75,26 @@ class Orchestrator:
             format="%(name)s - %(message)s",
             handlers=[RichHandler(console=self.console, rich_tracebacks=True)]
         )
+        # Clear existing handlers from the root logger to prevent duplicate logs
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+
+        # Add RichHandler for console output
+        rich_handler = RichHandler(console=self.console, rich_tracebacks=True)
+        rich_handler.setLevel(getattr(logging, log_level.upper()))
+        logging.root.addHandler(rich_handler)
+
+        # Add DatabaseLogHandler for persistence
+        self.db_handler = DatabaseLogHandler(self.status_manager)
+        self.db_handler.setLevel(logging.DEBUG) # Capture all levels for database
+        logging.root.addHandler(self.db_handler)
+
+        # Set the root logger level
+        logging.root.setLevel(getattr(logging, log_level.upper()))
+
         self.logger = logging.getLogger(__name__)
-        self.rich_handler = logging.getLogger().handlers[0]  # Store reference to rich handler
 
-    def disable_rich_logging(self):
-        """Disable rich logging for async execution."""
-        if hasattr(self, 'rich_handler'):
-            logging.getLogger().removeHandler(self.rich_handler)
-
-    def enable_rich_logging(self):
-        """Re-enable rich logging."""
-        if hasattr(self, 'rich_handler'):
-            logging.getLogger().addHandler(self.rich_handler)
+    
 
     def register_task_type(self, name: str, task_class: Type[BaseTask]):
         """Register a custom task type."""
@@ -255,7 +262,11 @@ class Orchestrator:
                         executor_instance = self.executor_factory.get_executor(task.executor)
                         task.execute(executor_instance)
                         task.status = TaskStatus.COMPLETED
-                        sm.set_task_status(dag_id, task.task_id, "completed", execution_id)
+                        try:
+                            sm.set_task_status(dag_id, task.task_id, "completed", execution_id)
+                        except Exception as status_error:
+                            # Handle case where DAG was force-removed while running
+                            self.logger.warning(f"Could not update task status for {task.task_id}: {status_error}")
                         if progress_tracker:
                             progress_tracker.increment_completed()
                         if status_callback:
@@ -264,7 +275,11 @@ class Orchestrator:
 
                     except Exception as e:
                         task.status = TaskStatus.FAILED
-                        sm.set_task_status(dag_id, task.task_id, "failed", execution_id)
+                        try:
+                            sm.set_task_status(dag_id, task.task_id, "failed", execution_id)
+                        except Exception as status_error:
+                            # Handle case where DAG was force-removed while running
+                            self.logger.warning(f"Could not update task status for {task.task_id}: {status_error}")
                         if status_callback:
                             status_callback()
 

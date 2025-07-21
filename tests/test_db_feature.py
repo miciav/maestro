@@ -1,5 +1,6 @@
 import pytest
 import os
+import uuid
 
 from maestro.core.orchestrator import Orchestrator
 from maestro.tasks.base import BaseTask
@@ -48,39 +49,59 @@ def test_db_creation(orchestrator, db_path):
 
 def test_save_state(orchestrator, dag_filepath, db_path):
     dag = orchestrator.load_dag_from_file(dag_filepath)
-    orchestrator.run_dag(dag)
+    execution_id = orchestrator.run_dag_in_thread(dag)
+    
+    # Wait for execution to complete
+    import time
+    time.sleep(2)
 
     with StatusManager(db_path) as sm:
-        assert sm.get_task_status(dag.dag_id, "task1") == "completed"
-        assert sm.get_task_status(dag.dag_id, "task2") == "completed"
+        assert sm.get_task_status(dag.dag_id, "task1", execution_id) == "completed"
+        assert sm.get_task_status(dag.dag_id, "task2", execution_id) == "completed"
 
 def test_resume_execution(orchestrator, dag_filepath, db_path):
     dag = orchestrator.load_dag_from_file(dag_filepath)
-
+    
+    # First, create an execution and set task1 as completed
+    execution_id = str(uuid.uuid4())
     with StatusManager(db_path) as sm:
-        sm.set_task_status(dag.dag_id, "task1", "completed")
+        # Create the execution and DAG records
+        sm.save_dag_definition(dag)
+        sm.create_dag_execution(dag.dag_id, execution_id)
+        sm.initialize_tasks_for_execution(dag.dag_id, execution_id, list(dag.tasks.keys()))
+        # Mark task1 as completed
+        sm.set_task_status(dag.dag_id, "task1", "completed", execution_id)
 
     assert not dag.tasks["task1"].executed
     assert not dag.tasks["task2"].executed
 
-    orchestrator.run_dag(dag, resume=True)
+    # Run the DAG with resume=True using the same execution_id
+    orchestrator.run_dag(dag, execution_id=execution_id, resume=True)
 
-    assert not dag.tasks["task1"].executed
-    assert dag.tasks["task2"].executed
+    assert not dag.tasks["task1"].executed  # Should not re-execute
+    assert dag.tasks["task2"].executed      # Should execute
     assert dag.tasks["task1"].status == TaskStatus.COMPLETED
     assert dag.tasks["task2"].status == TaskStatus.COMPLETED
 
 def test_reset_execution(orchestrator, dag_filepath, db_path):
     dag1 = orchestrator.load_dag_from_file(dag_filepath)
-    orchestrator.run_dag(dag1)
+    execution_id1 = orchestrator.run_dag_in_thread(dag1)
+    
+    # Wait for execution to complete
+    import time
+    time.sleep(2)
+    
     assert dag1.tasks["task1"].executed
 
     dag2 = orchestrator.load_dag_from_file(dag_filepath)
-    assert not dag2.tasks["task1"].executed
+    assert not dag2.tasks["task1"].executed  # New DAG instance has fresh tasks
 
-    orchestrator.run_dag(dag2, resume=False)
+    execution_id2 = orchestrator.run_dag_in_thread(dag2, resume=False)
+    time.sleep(2)
 
     assert dag2.tasks["task1"].executed
     with StatusManager(db_path) as sm:
-        assert sm.get_task_status(dag1.dag_id, "task1") == "completed"
+        # Both executions should show completed
+        assert sm.get_task_status(dag1.dag_id, "task1", execution_id1) == "completed"
+        assert sm.get_task_status(dag2.dag_id, "task1", execution_id2) == "completed"
 

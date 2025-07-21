@@ -49,8 +49,6 @@ DOCKER_NOUNS = [
 
 
 class StatusManager:
-    _engines = {}
-    _session_factories = {}
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -59,14 +57,10 @@ class StatusManager:
         self._initialize_tables_once()
 
     def _get_engine(self):
-        if self.db_path not in self._engines:
-            self._engines[self.db_path] = create_engine(f'sqlite:///{self.db_path}')
-        return self._engines[self.db_path]
+        return create_engine(f'sqlite:///{self.db_path}')
 
     def _get_session_factory(self):
-        if self.db_path not in self._session_factories:
-            self._session_factories[self.db_path] = sessionmaker(bind=self.engine)
-        return self._session_factories[self.db_path]
+        return sessionmaker(bind=self.engine)
 
     def _initialize_tables_once(self):
         with self.engine.connect() as connection:
