@@ -40,16 +40,7 @@ class MaestroAPIClient:
         """Check if the server is running"""
         response = self._make_request("GET", "/")
         return response.json()
-    
-    def submit_dag(self, dag_file_path: str,
-                   resume: bool = False,
-                   fail_fast: bool = True) -> Dict[str, Any]:
-        """Submit a DAG for execution (legacy)"""
-        # This method is now a wrapper around create_dag and run_dag
-        # It's kept for backward compatibility with the old CLI 'submit' command
-        create_response = self.create_dag(dag_file_path)
-        dag_id = create_response["dag_id"]
-        return self.run_dag(dag_id, resume, fail_fast)
+
 
     def create_dag(self, dag_file_path: str, dag_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a new DAG from a YAML file"""
@@ -188,7 +179,7 @@ class MaestroAPIClient:
         endpoint = "/v1/dags"
         params = {}
         if filter:
-            params["filter"] = filter
+            params["status"] = filter
         
         response = self._make_request("GET", endpoint, params=params)
         return response.json()

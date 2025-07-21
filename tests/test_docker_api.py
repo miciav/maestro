@@ -77,7 +77,7 @@ def test_create_dag(client: TestClient, sample_dag_file: str):
     )
     assert response.status_code == 200
     assert response.json()["dag_id"] == "test_dag_create"
-    assert "created successfully" in response.json()["message"]
+    assert "DAG 'test_dag_create' created successfully." in response.json()["message"]
 
     # Test creating with auto-generated ID
     response = client.post(

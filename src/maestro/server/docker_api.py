@@ -243,7 +243,7 @@ async def rm_dag(dag_id: str, force: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/dags", response_model=List[Dict[str, Any]])
-async def ls_dags(filter: Optional[str] = Query(None, description="Filter by status (active, terminated, all)")):
+async def ls_dags(status: Optional[str] = Query(None, description="Filter by status (active, terminated, all)")):
     """
     Lists all DAGs, with optional filtering.
     - `active`: shows running DAGs.
@@ -252,9 +252,9 @@ async def ls_dags(filter: Optional[str] = Query(None, description="Filter by sta
     """
     try:
         with orchestrator.status_manager as sm:
-            if filter == "active":
+            if status == "active":
                 dags = sm.get_dags_by_status("running")
-            elif filter == "terminated":
+            elif status == "terminated":
                 dags = sm.get_dags_by_status("completed")
                 dags.extend(sm.get_dags_by_status("failed"))
                 dags.extend(sm.get_dags_by_status("cancelled"))
