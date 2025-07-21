@@ -83,7 +83,7 @@ class StatusManager:
             task.status = status
             if status == "running":
                 task.started_at = datetime.now()
-            elif status in ["completed", "failed"]:
+            elif status in ["completed", "failed", "cancelled", "skipped"]:
                 task.completed_at = datetime.now()
 
     def get_task_status(self, dag_id: str, task_id: str, execution_id: str = None) -> Optional[str]:
@@ -221,15 +221,29 @@ class StatusManager:
                 session.delete(execution)
             return len(executions_to_delete)
 
-    def cancel_dag_execution(self, dag_id: str, execution_id: str = None) -> bool:
+    def cancel_dag_execution(self,
+                             dag_id: str,
+                             execution_id: str = None) -> bool:
         with self.Session.begin() as session:
             query = session.query(ExecutionORM).filter_by(dag_id=dag_id, status="running")
             if execution_id:
                 query = query.filter_by(id=execution_id)
             execution = query.first()
             if execution:
+                # Mark the execution as cancelled
                 execution.status = "cancelled"
                 execution.completed_at = datetime.now()
+                
+                # Mark all incomplete tasks (running, pending) as cancelled
+                session.query(TaskORM).filter(
+                    TaskORM.dag_id == dag_id,
+                    TaskORM.execution_id == execution.id,
+                    TaskORM.status.in_(["running", "pending"])
+                ).update(
+                    {TaskORM.status: "cancelled", TaskORM.completed_at: datetime.now()},
+                    synchronize_session=False
+                )
+                
                 return True
             return False
 

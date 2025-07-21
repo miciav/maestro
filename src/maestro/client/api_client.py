@@ -193,7 +193,8 @@ class MaestroAPIClient:
         response = self._make_request("GET", endpoint, params=params)
         return response.json()
 
-    def stop_dag(self, dag_id: str, execution_id: Optional[str] = None) -> Dict[str, Any]:
+    def stop_dag(self, dag_id: str,
+                 execution_id: Optional[str] = None) -> Dict[str, Any]:
         """Stop a running DAG execution"""
         endpoint = f"/v1/dags/{dag_id}/stop"
         data = {}

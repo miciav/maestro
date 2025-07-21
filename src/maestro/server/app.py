@@ -125,7 +125,25 @@ async def lifespan(app: FastAPI, db_path: Optional[str] = None):
     # Shutdown
     logger.info("Maestro server shutting down")
     if app.state.orchestrator:
+        # Stop all running DAGs before shutting down
+        try:
+            with app.state.orchestrator.status_manager as sm:
+                running_dags = sm.get_running_dags()
+                logger.info(f"Found {len(running_dags)} running DAGs to stop")
+                
+                for dag_info in running_dags:
+                    dag_id = dag_info["dag_id"]
+                    execution_id = dag_info["execution_id"]
+                    logger.info(f"Stopping DAG {dag_id} (execution: {execution_id})")
+                    
+                    # Cancel the DAG execution
+                    app.state.orchestrator.cancel_dag_execution(dag_id, execution_id)
+        except Exception as e:
+            logger.error(f"Error stopping running DAGs: {e}")
+        
+        # Shutdown executors
         app.state.orchestrator.executor.shutdown(wait=True)
+        app.state.orchestrator.task_executor.shutdown(wait=True)
         # Dispose of the SQLAlchemy engine to close all connections
         app.state.orchestrator.status_manager.engine.dispose()
 
@@ -367,14 +385,14 @@ async def list_dags(status: Optional[str] = None):
 async def cancel_dag(dag_id: str, execution_id: Optional[str] = None):
     """Cancel a running DAG execution"""
     try:
-        with app.state.orchestrator.status_manager as sm:
-            success = sm.cancel_dag_execution(dag_id, execution_id)
-            
-            if success:
-                message = f"Successfully cancelled execution {execution_id} of DAG {dag_id}" if execution_id else f"Successfully cancelled all running executions of DAG {dag_id}"
-                return {"message": message, "success": True}
-            else:
-                return {"message": f"No running executions found for DAG {dag_id}", "success": False}
+        # Use the orchestrator's cancel method which properly signals the thread
+        success = app.state.orchestrator.cancel_dag_execution(dag_id, execution_id)
+        
+        if success:
+            message = f"Successfully cancelled execution {execution_id} of DAG {dag_id}" if execution_id else f"Successfully cancelled all running executions of DAG {dag_id}"
+            return {"message": message, "success": True}
+        else:
+            return {"message": f"No running executions found for DAG {dag_id}", "success": False}
     except Exception as e:
         logger.error(f"Failed to cancel DAG: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -96,6 +96,9 @@ async def create_dag(request: DAGCreateRequest):
             sm.save_dag_definition(dag)
             # Create initial execution with 'created' status
             sm.create_dag_execution_with_status(dag_id, execution_id, "created")
+            # Initialize all tasks with pending status
+            task_ids = list(dag.tasks.keys())
+            sm.initialize_tasks_for_execution(dag_id, execution_id, task_ids)
 
         return DAGCreateResponse(
             dag_id=dag.dag_id,
