@@ -1,4 +1,3 @@
-import sqlite3
 import threading
 from typing import Dict, Optional, List, Any
 from datetime import datetime, timedelta
@@ -6,6 +5,11 @@ import re
 import random
 import string
 import json
+
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, func
+
+from maestro.core.models import DagORM, ExecutionORM, TaskORM, LogORM, Base
 
 # Docker-like name generator - lists of adjectives and nouns
 DOCKER_ADJECTIVES = [
@@ -45,629 +49,294 @@ DOCKER_NOUNS = [
 
 
 class StatusManager:
-    _tables_initialized = {}  # Class-level cache to track initialized databases
-    
+    _engines = {}
+    _session_factories = {}
+
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self._conn = None
-        self._lock = threading.RLock()  # Reentrant lock for thread safety
+        self.engine = self._get_engine()
+        self.Session = self._get_session_factory()
         self._initialize_tables_once()
 
-    def _initialize_tables_once(self):
-        """Initialize tables only once per database file."""
-        if self.db_path not in StatusManager._tables_initialized:
-            with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode for better concurrency
-                conn.execute("PRAGMA foreign_keys = ON") # Enable foreign key support
-                self._create_tables_in_connection(conn)
-                self._migrate_db_if_needed(conn)
-            StatusManager._tables_initialized[self.db_path] = True
+    def _get_engine(self):
+        if self.db_path not in self._engines:
+            self._engines[self.db_path] = create_engine(f'sqlite:///{self.db_path}')
+        return self._engines[self.db_path]
 
-    def _migrate_db_if_needed(self, conn):
-        """Check for and apply database migrations."""
-        cursor = conn.execute("PRAGMA table_info(tasks)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if 'insertion_order' not in columns:
-            conn.execute("ALTER TABLE tasks ADD COLUMN insertion_order INTEGER")
-            conn.commit()
+    def _get_session_factory(self):
+        if self.db_path not in self._session_factories:
+            self._session_factories[self.db_path] = sessionmaker(bind=self.engine)
+        return self._session_factories[self.db_path]
+
+    def _initialize_tables_once(self):
+        with self.engine.connect() as connection:
+            Base.metadata.create_all(self.engine)
 
     def __enter__(self):
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode for better concurrency
-        self._conn.execute("PRAGMA foreign_keys = ON") # Enable foreign key support
+        self.session = self.Session()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._conn:
-            self._conn.close()
+        if self.session:
+            self.session.close()
 
-    def _create_tables_in_connection(self, conn):
-        """Create tables in the provided connection."""
-        # Main table for DAGs
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS dags (
-                id TEXT PRIMARY KEY,
-                definition TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Main table for executions (must be created before tasks)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS executions (
-                id TEXT,
-                dag_id TEXT,
-                status TEXT,
-                started_at TIMESTAMP,
-                completed_at TIMESTAMP,
-                thread_id TEXT,
-                pid INTEGER,
-                PRIMARY KEY (id, dag_id),
-                FOREIGN KEY (dag_id) REFERENCES dags(id) ON DELETE CASCADE
-            )
-        """)
-
-        # Main table for tasks (references executions table)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS tasks (
-                id TEXT,
-                dag_id TEXT,
-                execution_id TEXT,
-                status TEXT,
-                started_at TIMESTAMP,
-                completed_at TIMESTAMP,
-                thread_id TEXT,
-                insertion_order INTEGER,
-                PRIMARY KEY (id, dag_id, execution_id),
-                FOREIGN KEY (dag_id) REFERENCES dags(id) ON DELETE CASCADE,
-                FOREIGN KEY (execution_id, dag_id) REFERENCES executions(id, dag_id) ON DELETE CASCADE
-            )
-        """)
-
-        # Main table for logs
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dag_id TEXT,
-                execution_id TEXT,
-                task_id TEXT,
-                level TEXT,
-                message TEXT,
-                timestamp TIMESTAMP,
-                thread_id TEXT,
-                FOREIGN KEY (dag_id) REFERENCES dags(id) ON DELETE CASCADE
-            )
-        """)
-
-        # Commit the changes
-        conn.commit()
-
-    def _create_dag_if_not_exists(self, dag_id: str):
-        with self._conn:
-            self._conn.execute("INSERT OR IGNORE INTO dags (id) VALUES (?)", (dag_id,))
-    
     def set_task_status(self, dag_id: str, task_id: str, status: str, execution_id: str = None):
-        """Set task status with thread safety and timestamp tracking."""
-        with self._lock:
-            self._create_dag_if_not_exists(dag_id)
-            current_time = datetime.now().isoformat()
-            thread_id = threading.current_thread().ident
-            
-            # If execution_id is None, use a default value to ensure queries work
-            if execution_id is None:
-                execution_id = "default"
-                # Ensure the default execution exists
-                self._conn.execute("""
-                    INSERT OR IGNORE INTO executions 
-                    (id, dag_id, status, started_at, thread_id, pid)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (execution_id, dag_id, "running", current_time, str(thread_id), str(thread_id)))
-            
-            with self._conn:
-                # Get insertion_order if it exists
-                cursor = self._conn.execute(
-                    "SELECT insertion_order FROM tasks WHERE id = ? AND dag_id = ? AND execution_id = ?",
-                    (task_id, dag_id, execution_id)
-                )
-                row = cursor.fetchone()
-                insertion_order = row[0] if row and row[0] is not None else None
-
-                if status == "running":
-                    self._conn.execute("""
-                        INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, execution_id, status, started_at, thread_id, insertion_order)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, execution_id, status, current_time, str(thread_id), insertion_order))
-                elif status in ["completed", "failed"]:
-                    cursor = self._conn.execute(
-                        "SELECT started_at FROM tasks WHERE id = ? AND dag_id = ? AND execution_id = ?", 
-                        (task_id, dag_id, execution_id)
-                    )
-                    row = cursor.fetchone()
-                    started_at = row[0] if row else current_time
-                    
-                    self._conn.execute("""
-                        INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, execution_id, status, started_at, completed_at, thread_id, insertion_order)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, execution_id, status, started_at, current_time, str(thread_id), insertion_order))
-                else:
-                    self._conn.execute("""
-                        INSERT OR REPLACE INTO tasks 
-                        (id, dag_id, execution_id, status, thread_id, insertion_order)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, execution_id, status, str(thread_id), insertion_order))
-                
-                # Explicitly commit the transaction
-                self._conn.commit()
+        with self.Session.begin() as session:
+            task = session.query(TaskORM).filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id).first()
+            if not task:
+                task = TaskORM(dag_id=dag_id, id=task_id, execution_id=execution_id)
+                session.add(task)
+            task.status = status
+            if status == "running":
+                task.started_at = datetime.now()
+            elif status in ["completed", "failed"]:
+                task.completed_at = datetime.now()
 
     def get_task_status(self, dag_id: str, task_id: str, execution_id: str = None) -> Optional[str]:
-        """Get task status with thread safety."""
-        with self._lock:
-            with self._conn:
-                if execution_id:
-                    cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ? AND execution_id = ?", (dag_id, task_id, execution_id))
-                    row = cursor.fetchone()
-                    if row:
-                        return row[0]
-                    # If not found with specific execution_id, try the default execution
-                    cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ? AND execution_id = ?", (dag_id, task_id, "default"))
-                    row = cursor.fetchone()
-                    return row[0] if row else None
-                else:
-                    # When execution_id is None, look for the default execution_id
-                    cursor = self._conn.execute("SELECT status FROM tasks WHERE dag_id = ? AND id = ? AND execution_id = ?", (dag_id, task_id, "default"))
-                    row = cursor.fetchone()
-                    return row[0] if row else None
+        with self.Session() as session:
+            task = session.query(TaskORM).filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id).first()
+            return task.status if task else None
 
     def get_dag_status(self, dag_id: str, execution_id: str = None) -> Dict[str, str]:
-        """Get DAG status with thread safety."""
-        with self._lock:
-            with self._conn:
-                if execution_id:
-                    cursor = self._conn.execute("SELECT id, status FROM tasks WHERE dag_id = ? AND execution_id = ?", (dag_id, execution_id))
-                else:
-                    cursor = self._conn.execute("SELECT id, status FROM tasks WHERE dag_id = ?", (dag_id,))
-                return {row[0]: row[1] for row in cursor.fetchall()}
+        with self.Session() as session:
+            tasks = session.query(TaskORM).filter_by(dag_id=dag_id, execution_id=execution_id).all()
+            return {task.id: task.status for task in tasks}
 
     def reset_dag_status(self, dag_id: str, execution_id: str = None):
-        """Reset DAG status with thread safety."""
-        with self._lock:
-            with self._conn:
-                if execution_id:
-                    # Only delete tasks for this execution, not the execution itself
-                    self._conn.execute("DELETE FROM tasks WHERE dag_id = ? AND execution_id = ?", (dag_id, execution_id))
-                else:
-                    self._conn.execute("DELETE FROM tasks WHERE dag_id = ?", (dag_id,))
-                    self._conn.execute("DELETE FROM executions WHERE dag_id = ?", (dag_id,))
+        with self.Session.begin() as session:
+            if execution_id:
+                session.query(TaskORM).filter_by(dag_id=dag_id, execution_id=execution_id).delete()
+            else:
+                session.query(TaskORM).filter_by(dag_id=dag_id).delete()
+                session.query(ExecutionORM).filter_by(dag_id=dag_id).delete()
 
     def create_dag_execution(self, dag_id: str, execution_id: str) -> str:
-        """Create a new DAG execution record."""
-        with self._lock:
-            self._create_dag_if_not_exists(dag_id)
-            current_time = datetime.now().isoformat()
-            thread_id = threading.current_thread().ident
-            pid = threading.current_thread().ident
-            
-            with self._conn:
-                self._conn.execute("""
-                    INSERT OR REPLACE INTO executions 
-                    (id, dag_id, status, started_at, thread_id, pid)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (execution_id, dag_id, "running", current_time, str(thread_id), pid))
-                self._conn.commit()
-            
+        with self.Session.begin() as session:
+            execution = ExecutionORM(id=execution_id, dag_id=dag_id, status="running", started_at=datetime.now(), thread_id=str(threading.current_thread().ident), pid=threading.current_thread().ident)
+            session.add(execution)
             return execution_id
-    
-    def create_dag_execution_with_status(self, dag_id: str, execution_id: str, status: str) -> str:
-        """Create a new DAG execution record with a specific status."""
-        with self._lock:
-            self._create_dag_if_not_exists(dag_id)
-            current_time = datetime.now().isoformat()
-            thread_id = threading.current_thread().ident
-            pid = threading.current_thread().ident
-            
-            with self._conn:
-                if status == "created":
-                    # For created status, don't set started_at or thread_id
-                    self._conn.execute("""
-                        INSERT OR REPLACE INTO executions 
-                        (id, dag_id, status, started_at, thread_id, pid)
-                        VALUES (?, ?, ?, NULL, NULL, ?)
-                    """, (execution_id, dag_id, status, pid))
-                else:
-                    # For other statuses, set started_at
-                    self._conn.execute("""
-                        INSERT OR REPLACE INTO executions 
-                        (id, dag_id, status, started_at, thread_id, pid)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (execution_id, dag_id, status, current_time, str(thread_id), pid))
-                self._conn.commit()
-            
-            return execution_id
-    
-    def initialize_tasks_for_execution(self, dag_id: str, execution_id: str, task_ids: List[str]):
-        """Initialize all tasks for a DAG execution with pending status."""
-        with self._lock:
-            thread_id = threading.current_thread().ident
-            
-            with self._conn:
-                for i, task_id in enumerate(task_ids):
-                    self._conn.execute("""
-                        INSERT OR IGNORE INTO tasks 
-                        (id, dag_id, execution_id, status, thread_id, insertion_order)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (task_id, dag_id, execution_id, "pending", str(thread_id), i))
 
-    def update_dag_execution_status(self, dag_id: str,
-                                    execution_id: str,
-                                    status: str):
-        """Update DAG execution status."""
-        with self._lock:
-            current_time = datetime.now().isoformat()
-            thread_id = threading.current_thread().ident
-            
-            with self._conn:
+    def create_dag_execution_with_status(self, dag_id: str, execution_id: str, status: str) -> str:
+        with self.Session.begin() as session:
+            execution = ExecutionORM(id=execution_id, dag_id=dag_id, status=status, pid=threading.current_thread().ident)
+            if status != "created":
+                execution.started_at = datetime.now()
+                execution.thread_id = str(threading.current_thread().ident)
+            session.add(execution)
+            return execution_id
+
+    def initialize_tasks_for_execution(self, dag_id: str, execution_id: str, task_ids: List[str]):
+        with self.Session.begin() as session:
+            for i, task_id in enumerate(task_ids):
+                task = TaskORM(id=task_id, dag_id=dag_id, execution_id=execution_id, status="pending", insertion_order=i)
+                session.add(task)
+
+    def update_dag_execution_status(self, dag_id: str, execution_id: str, status: str):
+        with self.Session.begin() as session:
+            execution = session.query(ExecutionORM).filter_by(dag_id=dag_id, id=execution_id).first()
+            if execution:
+                execution.status = status
                 if status in ["completed", "failed", "cancelled"]:
-                    self._conn.execute("""
-                        UPDATE executions 
-                        SET status = ?, completed_at = ?
-                        WHERE dag_id = ? AND id = ?
-                    """, (status, current_time, dag_id, execution_id))
-                elif status == "running":
-                    # When transitioning to running, set thread_id and started_at if not already set
-                    self._conn.execute("""
-                        UPDATE executions 
-                        SET status = ?, 
-                            thread_id = CASE WHEN thread_id IS NULL THEN ? ELSE thread_id END,
-                            started_at = CASE WHEN started_at IS NULL THEN ? ELSE started_at END
-                        WHERE dag_id = ? AND id = ?
-                    """, (status, str(thread_id), current_time, dag_id, execution_id))
-                else:
-                    self._conn.execute("""
-                        UPDATE executions 
-                        SET status = ?
-                        WHERE dag_id = ? AND id = ?
-                    """, (status, dag_id, execution_id))
-    
+                    execution.completed_at = datetime.now()
+
     def mark_incomplete_tasks_as_failed(self, dag_id: str, execution_id: str):
-        """Mark all running or pending tasks as failed for a given execution."""
-        with self._lock:
-            current_time = datetime.now().isoformat()
-            thread_id = threading.current_thread().ident
-            
-            with self._conn:
-                # Update all running/pending tasks to failed
-                self._conn.execute("""
-                    UPDATE tasks 
-                    SET status = 'failed', completed_at = ?, thread_id = ?
-                    WHERE dag_id = ? AND execution_id = ? AND status IN ('running', 'pending')
-                """, (current_time, str(thread_id), dag_id, execution_id))
+        with self.Session.begin() as session:
+            session.query(TaskORM).filter(TaskORM.dag_id == dag_id, TaskORM.execution_id == execution_id, TaskORM.status.in_(["running", "pending"]))
+                .update({TaskORM.status: "failed", TaskORM.completed_at: datetime.now()}, synchronize_session=False)
 
     def get_running_dags(self) -> List[Dict[str, Any]]:
-        """Get all currently running DAGs."""
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute("""
-                    SELECT dag_id, id, started_at, thread_id, pid
-                    FROM executions 
-                    WHERE status = 'running'
-                    ORDER BY started_at DESC
-                """)
-                return [{
-                    "dag_id": row[0],
-                    "execution_id": row[1],
-                    "started_at": row[2],
-                    "thread_id": row[3],
-                    "pid": row[4]
-                } for row in cursor.fetchall()]
+        with self.Session() as session:
+            executions = session.query(ExecutionORM).filter_by(status="running").all()
+            return [
+                {
+                    "dag_id": e.dag_id,
+                    "execution_id": e.id,
+                    "started_at": e.started_at.isoformat() if e.started_at else None,
+                    "thread_id": e.thread_id,
+                    "pid": e.pid
+                } for e in executions
+            ]
 
     def get_dags_by_status(self, status: str) -> List[Dict[str, Any]]:
-        """Get all DAGs with a specific status."""
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute("""
-                    SELECT dag_id, id, started_at, completed_at, thread_id, pid
-                    FROM executions 
-                    WHERE status = ?
-                    ORDER BY started_at DESC
-                """, (status,))
-                return [{
-                    "dag_id": row[0],
-                    "execution_id": row[1],
-                    "started_at": row[2],
-                    "completed_at": row[3],
-                    "thread_id": row[4],
-                    "pid": row[5]
-                } for row in cursor.fetchall()]
+        with self.Session() as session:
+            executions = session.query(ExecutionORM).filter_by(status=status).all()
+            return [
+                {
+                    "dag_id": e.dag_id,
+                    "execution_id": e.id,
+                    "started_at": e.started_at.isoformat() if e.started_at else None,
+                    "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+                    "thread_id": e.thread_id,
+                    "pid": e.pid
+                } for e in executions
+            ]
 
     def get_all_dags(self) -> List[Dict[str, Any]]:
-        """Get all DAGs regardless of status."""
-        with self._lock:
-            with self._conn:
-                # Get all DAGs with their latest execution info
-                cursor = self._conn.execute("""
-                    SELECT 
-                        d.id as dag_id,
-                        e.id as execution_id,
-                        e.status,
-                        e.started_at,
-                        e.completed_at,
-                        e.thread_id,
-                        e.pid
-                    FROM dags d
-                    LEFT JOIN (
-                        SELECT *, ROW_NUMBER() OVER (PARTITION BY dag_id ORDER BY started_at DESC) as rn
-                        FROM executions
-                    ) e ON d.id = e.dag_id AND e.rn = 1
-                    ORDER BY COALESCE(e.started_at, d.created_at) DESC
-                """)
-                return [{
-                    "dag_id": row[0],
-                    "execution_id": row[1],
-                    "status": row[2] if row[2] else "created",
-                    "started_at": row[3],
-                    "completed_at": row[4],
-                    "thread_id": row[5],
-                    "pid": row[6]
-                } for row in cursor.fetchall()]
+        with self.Session() as session:
+            dags = session.query(DagORM).all()
+            result = []
+            for dag in dags:
+                latest_execution = session.query(ExecutionORM).filter_by(dag_id=dag.id).order_by(ExecutionORM.started_at.desc()).first()
+                result.append({
+                    "dag_id": dag.id,
+                    "execution_id": latest_execution.id if latest_execution else None,
+                    "status": latest_execution.status if latest_execution else "created",
+                    "started_at": latest_execution.started_at.isoformat() if latest_execution and latest_execution.started_at else None,
+                    "completed_at": latest_execution.completed_at.isoformat() if latest_execution and latest_execution.completed_at else None,
+                    "thread_id": latest_execution.thread_id if latest_execution else None,
+                    "pid": latest_execution.pid if latest_execution else None
+                })
+            return result
 
     def get_dag_summary(self) -> Dict[str, Any]:
-        """Get summary statistics of all DAGs."""
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute("""
-                    SELECT status, COUNT(*) as count
-                    FROM executions 
-                    GROUP BY status
-                """)
-                status_counts = {row[0]: row[1] for row in cursor.fetchall()}
-                
-                cursor = self._conn.execute("SELECT COUNT(*) FROM executions")
-                total_count = cursor.fetchone()[0]
-                
-                cursor = self._conn.execute("SELECT COUNT(DISTINCT dag_id) FROM executions")
-                unique_dags = cursor.fetchone()[0]
-                
-                return {
-                    "total_executions": total_count,
-                    "unique_dags": unique_dags,
-                    "status_counts": status_counts
-                }
+        with self.Session() as session:
+            status_counts = session.query(ExecutionORM.status, func.count(ExecutionORM.status)).group_by(ExecutionORM.status).all()
+            total_count = session.query(ExecutionORM).count()
+            unique_dags = session.query(DagORM).count()
+            return {
+                "total_executions": total_count,
+                "unique_dags": unique_dags,
+                "status_counts": dict(status_counts)
+            }
 
     def get_dag_history(self, dag_id: str) -> List[Dict[str, Any]]:
-        """Get execution history for a specific DAG."""
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute("""
-                    SELECT id, status, started_at, completed_at, thread_id, pid
-                    FROM executions 
-                    WHERE dag_id = ?
-                    ORDER BY started_at DESC
-                """, (dag_id,))
-                return [{
-                    "execution_id": row[0],
-                    "status": row[1],
-                    "started_at": row[2],
-                    "completed_at": row[3],
-                    "thread_id": row[4],
-                    "pid": row[5]
-                } for row in cursor.fetchall()]
+        with self.Session() as session:
+            executions = session.query(ExecutionORM).filter_by(dag_id=dag_id).order_by(ExecutionORM.started_at.desc()).all()
+            return [
+                {
+                    "execution_id": e.id,
+                    "status": e.status,
+                    "started_at": e.started_at.isoformat() if e.started_at else None,
+                    "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+                    "thread_id": e.thread_id,
+                    "pid": e.pid
+                } for e in executions
+            ]
 
     def cleanup_old_executions(self, days_to_keep: int = 30):
-        """Clean up old execution records older than specified days."""
-        with self._lock:
-            with self._conn:
-                cutoff_date = datetime.now() - timedelta(days=days_to_keep)
-                cutoff_iso = cutoff_date.isoformat()
-                
-                cursor = self._conn.execute("""
-                    SELECT id FROM executions 
-                    WHERE started_at < ?
-                """, (cutoff_iso,))
-                
-                executions_to_delete = [row[0] for row in cursor.fetchall()]
-
-                if not executions_to_delete:
-                    return 0
-
-                placeholders = ",".join("?" * len(executions_to_delete))
-
-                self._conn.execute(f"DELETE FROM logs WHERE execution_id IN ({placeholders})", executions_to_delete)
-                self._conn.execute(f"DELETE FROM tasks WHERE execution_id IN ({placeholders})", executions_to_delete)
-                self._conn.execute(f"DELETE FROM executions WHERE id IN ({placeholders})", executions_to_delete)
-
-                # Optional: Clean up DAGs that have no executions left
-                self._conn.execute("""
-                    DELETE FROM dags 
-                    WHERE id NOT IN (SELECT DISTINCT dag_id FROM executions)
-                """)
-                
-                return len(executions_to_delete)
+        with self.Session.begin() as session:
+            cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+            executions_to_delete = session.query(ExecutionORM).filter(ExecutionORM.started_at < cutoff_date).all()
+            for execution in executions_to_delete:
+                session.delete(execution)
+            return len(executions_to_delete)
 
     def cancel_dag_execution(self, dag_id: str, execution_id: str = None) -> bool:
-        """Cancel a running DAG execution."""
-        with self._lock:
-            with self._conn:
-                if execution_id:
-                    cursor = self._conn.execute("""
-                        UPDATE executions 
-                        SET status = 'cancelled', completed_at = ?
-                        WHERE dag_id = ? AND id = ? AND status = 'running'
-                    """, (datetime.now().isoformat(), dag_id, execution_id))
-                else:
-                    cursor = self._conn.execute("""
-                        UPDATE executions 
-                        SET status = 'cancelled', completed_at = ?
-                        WHERE dag_id = ? AND status = 'running'
-                    """, (datetime.now().isoformat(), dag_id))
-                
-                return cursor.rowcount > 0
+        with self.Session.begin() as session:
+            query = session.query(ExecutionORM).filter_by(dag_id=dag_id, status="running")
+            if execution_id:
+                query = query.filter_by(id=execution_id)
+            execution = query.first()
+            if execution:
+                execution.status = "cancelled"
+                execution.completed_at = datetime.now()
+                return True
+            return False
 
     def get_dag_execution_details(self, dag_id: str, execution_id: str = None) -> Dict[str, Any]:
-        """Get detailed information about a DAG execution."""
-        with self._lock:
-            with self._conn:
-                if execution_id:
-                    cursor = self._conn.execute("""
-                        SELECT id, status, started_at, completed_at, thread_id, pid
-                        FROM executions 
-                        WHERE dag_id = ? AND id = ?
-                    """, (dag_id, execution_id))
-                else:
-                    cursor = self._conn.execute("""
-                        SELECT id, status, started_at, completed_at, thread_id, pid
-                        FROM executions 
-                        WHERE dag_id = ?
-                        ORDER BY started_at DESC
-                        LIMIT 1
-                    """, (dag_id,))
-                
-                exec_row = cursor.fetchone()
-                if not exec_row:
-                    return {}
-                
-                execution_id = exec_row[0]
-                
-                task_cursor = self._conn.execute("""
-                    SELECT id, status, started_at, completed_at, thread_id
-                    FROM tasks 
-                    WHERE dag_id = ? AND execution_id = ?
-                    ORDER BY insertion_order
-                """, (dag_id, execution_id))
-                
-                tasks = [{
-                    "task_id": row[0],
-                    "status": row[1],
-                    "started_at": row[2],
-                    "completed_at": row[3],
-                    "thread_id": row[4]
-                } for row in task_cursor.fetchall()]
-                
-                return {
-                    "execution_id": execution_id,
-                    "status": exec_row[1],
-                    "started_at": exec_row[2],
-                    "completed_at": exec_row[3],
-                    "thread_id": exec_row[4],
-                    "pid": exec_row[5],
-                    "tasks": tasks
-                }
+        with self.Session() as session:
+            query = session.query(ExecutionORM).filter_by(dag_id=dag_id)
+            if execution_id:
+                query = query.filter_by(id=execution_id)
+            else:
+                query = query.order_by(ExecutionORM.started_at.desc())
+            execution = query.first()
+
+            if not execution:
+                return {}
+
+            tasks = session.query(TaskORM).filter_by(dag_id=dag_id, execution_id=execution.id).order_by(TaskORM.insertion_order).all()
+            return {
+                "execution_id": execution.id,
+                "status": execution.status,
+                "started_at": execution.started_at.isoformat() if execution.started_at else None,
+                "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
+                "thread_id": execution.thread_id,
+                "pid": execution.pid,
+                "tasks": [
+                    {
+                        "task_id": task.id,
+                        "status": task.status,
+                        "started_at": task.started_at.isoformat() if task.started_at else None,
+                        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                        "thread_id": task.thread_id
+                    } for task in tasks
+                ]
+            }
 
     def log_message(self, dag_id: str, execution_id: str, task_id: str, level: str, message: str):
-        """Log a message with thread identification."""
-        with self._lock:
-            current_time = datetime.now().isoformat()
-            thread_id = threading.current_thread().ident
-            
-            with self._conn:
-                self._conn.execute("""
-                    INSERT INTO logs 
-                    (dag_id, execution_id, task_id, level, message, timestamp, thread_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (dag_id, execution_id, task_id, level, message, current_time, str(thread_id)))
+        with self.Session.begin() as session:
+            log = LogORM(dag_id=dag_id, execution_id=execution_id, task_id=task_id, level=level, message=message, thread_id=str(threading.current_thread().ident))
+            session.add(log)
 
     def get_execution_logs(self, dag_id: str, execution_id: str = None, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get execution logs for a DAG."""
-        with self._lock:
-            with self._conn:
-                if execution_id:
-                    cursor = self._conn.execute("""
-                        SELECT task_id, level, message, timestamp, thread_id
-                        FROM logs 
-                        WHERE dag_id = ? AND execution_id = ?
-                        ORDER BY timestamp DESC
-                        LIMIT ?
-                    """, (dag_id, execution_id, limit))
-                else:
-                    cursor = self._conn.execute("""
-                        SELECT task_id, level, message, timestamp, thread_id
-                        FROM logs 
-                        WHERE dag_id = ?
-                        ORDER BY timestamp DESC
-                        LIMIT ?
-                    """, (dag_id, limit))
-                
-                return [{
-                    "task_id": row[0],
-                    "level": row[1],
-                    "message": row[2],
-                    "timestamp": row[3],
-                    "thread_id": row[4]
-                } for row in cursor.fetchall()]
+        with self.Session() as session:
+            query = session.query(LogORM).filter_by(dag_id=dag_id)
+            if execution_id:
+                query = query.filter_by(execution_id=execution_id)
+            logs = query.order_by(LogORM.timestamp.desc()).limit(limit).all()
+            return [
+                {
+                    "task_id": log.task_id,
+                    "level": log.level,
+                    "message": log.message,
+                    "timestamp": log.timestamp.isoformat(),
+                    "thread_id": log.thread_id
+                } for log in logs
+            ]
 
     def validate_dag_id(self, dag_id: str) -> bool:
-        """Validate DAG ID format - must be alphanumeric with underscores and hyphens."""
         if not dag_id:
             return False
-        # Allow alphanumeric characters, underscores, and hyphens
         return bool(re.match(r'^[a-zA-Z0-9_-]+$', dag_id))
 
     def check_dag_id_uniqueness(self, dag_id: str) -> bool:
-        """Check if DAG ID is unique by looking at existing DAGs in the database."""
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute("SELECT id FROM dags WHERE id = ?", (dag_id,))
-                return cursor.fetchone() is None
+        with self.Session() as session:
+            return session.query(DagORM).filter_by(id=dag_id).first() is None
 
     def generate_unique_dag_id(self) -> str:
-        """Generate a unique DAG ID using Docker-like naming, ensuring uniqueness."""
         max_attempts = 100
         for _ in range(max_attempts):
             dag_id = f"{random.choice(DOCKER_ADJECTIVES)}_{random.choice(DOCKER_NOUNS)}"
             if self.check_dag_id_uniqueness(dag_id):
                 return dag_id
-        
-        # If we can't generate a unique name after max_attempts, add a random suffix
         base_name = f"{random.choice(DOCKER_ADJECTIVES)}_{random.choice(DOCKER_NOUNS)}"
         suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
         return f"{base_name}_{suffix}"
 
     def get_latest_execution(self, dag_id: str) -> Optional[Dict[str, Any]]:
-        """Get the latest execution for a DAG."""
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute("""
-                    SELECT id, status, started_at, completed_at, thread_id, pid
-                    FROM executions 
-                    WHERE dag_id = ?
-                    ORDER BY COALESCE(started_at, datetime('now')) DESC
-                    LIMIT 1
-                """, (dag_id,))
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        "execution_id": row[0],
-                        "status": row[1],
-                        "started_at": row[2],
-                        "completed_at": row[3],
-                        "thread_id": row[4],
-                        "pid": row[5]
-                    }
-                return None
+        with self.Session() as session:
+            execution = session.query(ExecutionORM).filter_by(dag_id=dag_id).order_by(ExecutionORM.started_at.desc()).first()
+            if execution:
+                return {
+                    "execution_id": execution.id,
+                    "status": execution.status,
+                    "started_at": execution.started_at.isoformat() if execution.started_at else None,
+                    "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
+                    "thread_id": execution.thread_id,
+                    "pid": execution.pid
+                }
+            return None
 
     def save_dag_definition(self, dag):
-        """Save the DAG definition to the database."""
-        with self._lock:
-            with self._conn:
-                self._conn.execute("""
-                    INSERT OR REPLACE INTO dags (id, definition)
-                    VALUES (?, ?)
-                """, (dag.dag_id, json.dumps(dag.to_dict())))
+        with self.Session.begin() as session:
+            dag_orm = session.query(DagORM).filter_by(id=dag.dag_id).first()
+            if not dag_orm:
+                dag_orm = DagORM(id=dag.dag_id)
+                session.add(dag_orm)
+            dag_orm.definition = json.dumps(dag.to_dict())
 
     def get_dag_definition(self, dag_id: str) -> Optional[Dict]:
-        """Get the DAG definition from the database."""
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute("SELECT definition FROM dags WHERE id = ?", (dag_id,))
-                row = cursor.fetchone()
-                if row and row[0]:
-                    return json.loads(row[0])
-                return None
+        with self.Session() as session:
+            dag = session.query(DagORM).filter_by(id=dag_id).first()
+            if dag and dag.definition:
+                return json.loads(dag.definition)
+            return None
 
     def delete_dag(self, dag_id: str) -> int:
-        """Delete a DAG and all its associated executions, tasks, and logs."""
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute("DELETE FROM dags WHERE id = ?", (dag_id,))
-                return cursor.rowcount
+        with self.Session.begin() as session:
+            dag = session.query(DagORM).filter_by(id=dag_id).first()
+            if dag:
+                session.delete(dag)
+                return 1
+            return 0
