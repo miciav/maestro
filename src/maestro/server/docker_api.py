@@ -8,10 +8,10 @@ import json
 import uuid
 
 from maestro.core.orchestrator import Orchestrator
-from maestro.core.status_manager import StatusManager
 
-# Global orchestrator instance (to be initialized in app.py)
-orchestrator: Orchestrator = None
+# Module-level orchestrator variable that will be set by the app
+orchestrator = None
+
 
 router = APIRouter(
     prefix="/v1",
@@ -60,19 +60,24 @@ async def create_dag(request: DAGCreateRequest):
     """
     try:
         # Generate or check provided DAG ID
+        print(f"[DEBUG] create_dag: Received dag_file_path: {request.dag_file_path}")
         if request.dag_id is not None:
             dag_id = request.dag_id.strip()
             
             # Validate DAG ID format
+            print(f"[DEBUG] create_dag: dag_id = {dag_id}")
             with orchestrator.status_manager as sm:
-                if not sm.validate_dag_id(dag_id):
+                is_valid = sm.validate_dag_id(dag_id)
+                print(f"[DEBUG] create_dag: is_valid = {is_valid}")
+                if not is_valid:
                     raise HTTPException(
                         status_code=400, 
                         detail=f"Invalid DAG ID format: '{dag_id}'. Must contain only alphanumeric characters, underscores, and hyphens."
                     )
                 
-                # Check uniqueness of provided DAG ID
-                if not sm.check_dag_id_uniqueness(dag_id):
+                is_unique = sm.check_dag_id_uniqueness(dag_id)
+                print(f"[DEBUG] create_dag: is_unique = {is_unique}")
+                if not is_unique:
                     raise HTTPException(
                         status_code=400, 
                         detail=f"DAG ID '{dag_id}' already exists. Please choose a different DAG ID."
@@ -91,6 +96,9 @@ async def create_dag(request: DAGCreateRequest):
             sm.save_dag_definition(dag)
             # Create initial execution with 'created' status
             sm.create_dag_execution_with_status(dag_id, execution_id, "created")
+            # Initialize all tasks with pending status
+            task_ids = list(dag.tasks.keys())
+            sm.initialize_tasks_for_execution(dag_id, execution_id, task_ids)
 
         return DAGCreateResponse(
             dag_id=dag.dag_id,
@@ -235,7 +243,7 @@ async def rm_dag(dag_id: str, force: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/dags", response_model=List[Dict[str, Any]])
-async def ls_dags(filter: Optional[str] = Query(None, description="Filter by status (active, terminated, all)")):
+async def ls_dags(status: Optional[str] = Query(None, description="Filter by status (active, terminated, all)")):
     """
     Lists all DAGs, with optional filtering.
     - `active`: shows running DAGs.
@@ -244,9 +252,9 @@ async def ls_dags(filter: Optional[str] = Query(None, description="Filter by sta
     """
     try:
         with orchestrator.status_manager as sm:
-            if filter == "active":
+            if status == "active":
                 dags = sm.get_dags_by_status("running")
-            elif filter == "terminated":
+            elif status == "terminated":
                 dags = sm.get_dags_by_status("completed")
                 dags.extend(sm.get_dags_by_status("failed"))
                 dags.extend(sm.get_dags_by_status("cancelled"))

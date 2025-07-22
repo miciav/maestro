@@ -84,61 +84,6 @@ class TestMaestroAPIClient:
         
         assert "Could not connect to Maestro server" in str(exc_info.value)
     
-    # Submit DAG Tests
-    @pytest.mark.unit
-    def test_submit_dag_success(self, mock_responses):
-        """Test successful DAG submission."""
-        mock_responses.add(
-            responses.POST,
-            "http://localhost:8000/dags/submit",
-            json=self.mock_dag_response,
-            status=200
-        )
-        
-        result = self.client.submit_dag("/path/to/dag.yaml",
-                                        resume=True,
-                                        fail_fast=False)
-        
-        assert result == self.mock_dag_response
-        assert len(mock_responses.calls) == 1
-        
-        # Verify request payload
-        request_body = json.loads(mock_responses.calls[0].request.body)
-        assert request_body["dag_file_path"] == "/path/to/dag.yaml"
-        assert request_body["resume"] is True
-        assert request_body["fail_fast"] is False
-    
-    @pytest.mark.unit
-    def test_submit_dag_default_parameters(self, mock_responses):
-        """Test DAG submission with default parameters."""
-        mock_responses.add(
-            responses.POST,
-            "http://localhost:8000/dags/submit",
-            json=self.mock_dag_response,
-            status=200
-        )
-        
-        result = self.client.submit_dag("/path/to/dag.yaml")
-        
-        request_body = json.loads(mock_responses.calls[0].request.body)
-        assert request_body["resume"] is False
-        assert request_body["fail_fast"] is True
-    
-    @pytest.mark.unit
-    def test_submit_dag_bad_request(self, mock_responses):
-        """Test DAG submission with bad request."""
-        mock_responses.add(
-            responses.POST,
-            "http://localhost:8000/dags/submit",
-            json={"detail": "Invalid DAG file"},
-            status=400
-        )
-        
-        with pytest.raises(ValueError) as exc_info:
-            self.client.submit_dag("/path/to/invalid.yaml")
-        
-        assert "Bad request: Invalid DAG file" in str(exc_info.value)
-    
     # Get DAG Status Tests
     @pytest.mark.unit
     def test_get_dag_status_success(self, mock_responses):
@@ -211,12 +156,12 @@ class TestMaestroAPIClient:
         
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/test-dag/logs",
+            "http://localhost:8000/v1/dags/test-dag/log",
             json=logs_response,
             status=200
         )
         
-        result = self.client.get_dag_logs("test-dag")
+        result = self.client.get_dag_logs_v1("test-dag")
         
         assert result == logs_response
         assert len(mock_responses.calls) == 1
@@ -231,7 +176,7 @@ class TestMaestroAPIClient:
             status=200
         )
         
-        result = self.client.get_dag_logs(
+        result = self.client.get_dag_logs_v1(
             "test-dag",
             execution_id="exec-123",
             limit=50,
@@ -258,7 +203,7 @@ class TestMaestroAPIClient:
         
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/test-dag/logs/stream",
+            "http://localhost:8000/v1/dags/test-dag/attach",
             body="".join(stream_data),
             status=200,
             stream=True
@@ -275,13 +220,13 @@ class TestMaestroAPIClient:
         """Test DAG logs streaming with filters."""
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/test-dag/logs/stream",
+            "http://localhost:8000/v1/dags/test-dag/attach",
             body="",
             status=200,
             stream=True
         )
         
-        list(self.client.stream_dag_logs(
+        list(self.client.stream_dag_logs_v1(
             "test-dag",
             execution_id="exec-123",
             task_filter="specific-task",
@@ -299,13 +244,13 @@ class TestMaestroAPIClient:
         """Test DAG logs streaming with invalid JSON."""
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/test-dag/logs/stream",
+            "http://localhost:8000/v1/dags/test-dag/attach",
             body="data: {invalid json}\n",
             status=200,
             stream=True
         )
         
-        logs = list(self.client.stream_dag_logs("test-dag"))
+        logs = list(self.client.stream_dag_logs_v1("test-dag"))
         
         # Should skip invalid JSON lines
         assert len(logs) == 0
@@ -500,7 +445,7 @@ class TestMaestroAPIClient:
         """Test DAG listing with status filter."""
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/list",
+            "http://localhost:8000/v1/dags",
             json={"dags": [], "count": 0, "title": "Running DAGs"},
             status=200
         )
@@ -508,7 +453,7 @@ class TestMaestroAPIClient:
         result = self.client.list_dags(status_filter="running")
         
         # Check that status parameter was passed
-        assert mock_responses.calls[0].request.url.endswith("?status=running")
+        assert mock_responses.calls[0].request.url.endswith("?status=active")
     
     # Server Status Tests
     @pytest.mark.unit

@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global orchestrator instance
-orchestrator = None
+
 
 # Pydantic models for API requests/responses
 class DAGSubmissionRequest(BaseModel):
@@ -98,23 +98,22 @@ def print_logo():
         logger.error(f"Could not print logo: {e}")
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI, db_path: Optional[str] = None):
     # Startup
     print_logo()  # Print the logo at startup
-    global orchestrator
+    
     import os
     # Use absolute path to ensure consistency
-    db_path = os.path.abspath("maestro.db")
+    db_path = os.path.abspath(db_path or "maestro.db")
     logger.info(f"[DEBUG] Initializing Maestro server with database: {db_path}") # Added debug log
     status_manager = StatusManager(db_path)
-    orchestrator = Orchestrator(log_level="INFO", status_manager=status_manager)
-    orchestrator.disable_rich_logging()  # Disable rich logging for server mode
+    app.state.orchestrator = Orchestrator(log_level="INFO", status_manager=status_manager)
     
     # Pass the orchestrator instance to the Docker API module
-    docker_api.orchestrator = orchestrator
+    docker_api.orchestrator = app.state.orchestrator
     
     # Ensure database tables are created
-    with orchestrator.status_manager as sm:
+    with app.state.orchestrator.status_manager as sm:
         # This will trigger table creation if they don't exist
         pass
     
@@ -125,8 +124,28 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Maestro server shutting down")
-    if orchestrator:
-        orchestrator.executor.shutdown(wait=True)
+    if app.state.orchestrator:
+        # Stop all running DAGs before shutting down
+        try:
+            with app.state.orchestrator.status_manager as sm:
+                running_dags = sm.get_running_dags()
+                logger.info(f"Found {len(running_dags)} running DAGs to stop")
+                
+                for dag_info in running_dags:
+                    dag_id = dag_info["dag_id"]
+                    execution_id = dag_info["execution_id"]
+                    logger.info(f"Stopping DAG {dag_id} (execution: {execution_id})")
+                    
+                    # Cancel the DAG execution
+                    app.state.orchestrator.cancel_dag_execution(dag_id, execution_id)
+        except Exception as e:
+            logger.error(f"Error stopping running DAGs: {e}")
+        
+        # Shutdown executors
+        app.state.orchestrator.executor.shutdown(wait=True)
+        app.state.orchestrator.task_executor.shutdown(wait=True)
+        # Dispose of the SQLAlchemy engine to close all connections
+        app.state.orchestrator.status_manager.engine.dispose()
 
 # Import the new Docker-inspired API
 from maestro.server.docker_api import router as docker_router
@@ -157,7 +176,7 @@ async def submit_dag(request: DAGSubmissionRequest, background_tasks: Background
             dag_id: str = request.dag_id.strip()
             
             # Validate DAG ID format
-            with orchestrator.status_manager as sm:
+            with app.state.orchestrator.status_manager as sm:
                 if not sm.validate_dag_id(dag_id):
                     raise HTTPException(
                         status_code=400, 
@@ -171,14 +190,14 @@ async def submit_dag(request: DAGSubmissionRequest, background_tasks: Background
                         detail=f"DAG ID '{dag_id}' already exists. Please choose a different DAG ID."
                     )
         else:
-            with orchestrator.status_manager as sm:
+            with app.state.orchestrator.status_manager as sm:
                 dag_id: str = sm.generate_unique_dag_id()
 
         # Load and validate DAG
-        dag: DAG = orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
+        dag: DAG = app.state.orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
         
         # Start DAG execution in background
-        execution_id = orchestrator.run_dag_in_thread(
+        execution_id = app.state.orchestrator.run_dag_in_thread(
             dag=dag,
             resume=request.resume,
             fail_fast=request.fail_fast 
@@ -199,8 +218,8 @@ async def submit_dag(request: DAGSubmissionRequest, background_tasks: Background
 async def get_dag_status(dag_id: str, execution_id: Optional[str] = None):
     """Get status of a specific DAG execution"""
     try:
-        with orchestrator.status_manager as sm:
-            exec_details: dict[str, Any]   = sm.get_dag_execution_details(dag_id, execution_id)
+        with app.state.orchestrator.status_manager as sm:
+            exec_details: dict[str, Any] = sm.get_dag_execution_details(dag_id, execution_id)
             
             if not exec_details:
                 raise HTTPException(status_code=404, detail=f"DAG execution not found: {dag_id}")
@@ -230,7 +249,7 @@ async def get_dag_logs(
 ):
     """Get logs for a specific DAG execution"""
     try:
-        with orchestrator.status_manager as sm:
+        with app.state.orchestrator.status_manager as sm:
             logs = sm.get_execution_logs(dag_id, execution_id, limit)
             
             # Apply filters
@@ -274,7 +293,7 @@ async def stream_dag_logs(
         
         while True:
             try:
-                with orchestrator.status_manager as sm:
+                with app.state.orchestrator.status_manager as sm:
                     logs = sm.get_execution_logs(dag_id, execution_id, limit=100)
                     
                     # Apply filters
@@ -327,7 +346,7 @@ async def stream_dag_logs(
 async def get_running_dags():
     """Get all currently running DAGs"""
     try:
-        with orchestrator.status_manager as sm:
+        with app.state.orchestrator.status_manager as sm:
             running_dags = sm.get_running_dags()
             
             return RunningDAGsResponse(
@@ -342,7 +361,7 @@ async def get_running_dags():
 async def list_dags(status: Optional[str] = None):
     """List all DAGs with optional status filtering"""
     try:
-        with orchestrator.status_manager as sm:
+        with app.state.orchestrator.status_manager as sm:
             if status:
                 # Get DAGs with specific status
                 dags = sm.get_dags_by_status(status)
@@ -366,14 +385,14 @@ async def list_dags(status: Optional[str] = None):
 async def cancel_dag(dag_id: str, execution_id: Optional[str] = None):
     """Cancel a running DAG execution"""
     try:
-        with orchestrator.status_manager as sm:
-            success = sm.cancel_dag_execution(dag_id, execution_id)
-            
-            if success:
-                message = f"Successfully cancelled execution {execution_id} of DAG {dag_id}" if execution_id else f"Successfully cancelled all running executions of DAG {dag_id}"
-                return {"message": message, "success": True}
-            else:
-                return {"message": f"No running executions found for DAG {dag_id}", "success": False}
+        # Use the orchestrator's cancel method which properly signals the thread
+        success = app.state.orchestrator.cancel_dag_execution(dag_id, execution_id)
+        
+        if success:
+            message = f"Successfully cancelled execution {execution_id} of DAG {dag_id}" if execution_id else f"Successfully cancelled all running executions of DAG {dag_id}"
+            return {"message": message, "success": True}
+        else:
+            return {"message": f"No running executions found for DAG {dag_id}", "success": False}
     except Exception as e:
         logger.error(f"Failed to cancel DAG: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -386,7 +405,7 @@ async def validate_dag(request: dict):
         if not dag_file_path:
             raise ValueError("dag_file_path is required")
         
-        dag = orchestrator.load_dag_from_file(dag_file_path)
+        dag = app.state.orchestrator.load_dag_from_file(dag_file_path)
         
         # Get execution order to validate dependencies
         execution_order = dag.get_execution_order()
@@ -418,7 +437,7 @@ async def validate_dag(request: dict):
 async def cleanup_old_executions(days: int = 30):
     """Clean up old execution records"""
     try:
-        with orchestrator.status_manager as sm:
+        with app.state.orchestrator.status_manager as sm:
             deleted_count = sm.cleanup_old_executions(days)
             
             return {

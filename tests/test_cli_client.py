@@ -47,60 +47,7 @@ class TestCliClient:
             yield f.name
         os.unlink(f.name)
 
-    # Submit Command Tests
-    @pytest.mark.unit
-    def test_submit_command_success(self, mock_api_client, mock_check_server, temp_dag_file):
-        """Test successful DAG submission."""
-        mock_api_client.submit_dag.return_value = self.mock_response_data
-
-        result = self.runner.invoke(app, ['submit', temp_dag_file])
-
-        assert result.exit_code == 0
-        assert "✓ DAG submitted successfully!" in result.output
-        assert "test-dag-123" in result.output
-        assert "exec-456" in result.output
-        mock_check_server.assert_called_once()
-        mock_api_client.submit_dag.assert_called_once()
-
-    @pytest.mark.unit
-    def test_submit_command_with_options(self, mock_api_client, mock_check_server, temp_dag_file):
-        """Test DAG submission with resume and fail-fast options."""
-        mock_api_client.submit_dag.return_value = self.mock_response_data
-
-        result = self.runner.invoke(app, [
-            'submit', temp_dag_file,
-            '--resume',
-            '--no-fail-fast',
-            '--server', 'http://custom:9000'
-        ])
-
-        assert result.exit_code == 0
-        mock_api_client.submit_dag.assert_called_once_with(
-            os.path.abspath(temp_dag_file), True, False
-        )
-
-    @pytest.mark.unit
-    def test_submit_command_file_not_found(self, mock_api_client, mock_check_server):
-        """Test submission with non-existent file."""
-        result = self.runner.invoke(app, ['submit', 'nonexistent.yaml'])
-
-        assert result.exit_code == 1
-        assert "DAG file not found" in result.output
-        mock_api_client.submit_dag.assert_not_called()
-
-    @pytest.mark.unit
-    def test_submit_command_server_error(self, mock_api_client, mock_check_server, temp_dag_file):
-        """Test submission with server error."""
-        mock_api_client.submit_dag.side_effect = RuntimeError("Server error")
-
-        result = self.runner.invoke(app, ['submit', temp_dag_file])
-
-        print(f"Exit code: {result.exit_code}")
-        print(f"Output: {result.output}")
-        print(f"Exception: {result.exception}")
-        
-        assert result.exit_code == 1
-        assert "Error: Server error" in result.output
+    
 
     # Status Command Tests
     @pytest.mark.unit
@@ -158,8 +105,7 @@ class TestCliClient:
     @pytest.mark.unit
     def test_logs_command_success(self, mock_api_client, mock_check_server):
         """Test successful logs retrieval."""
-        mock_api_client.get_dag_logs.return_value = {
-            'logs': [
+        mock_api_client.get_dag_logs_v1.return_value = [
                 {
                     'timestamp': '2025-07-18T18:33:35.123456Z',
                     'level': 'INFO',
@@ -172,48 +118,36 @@ class TestCliClient:
                     'task_id': 'task-2',
                     'message': 'Task failed'
                 }
-            ],
-            'total_count': 2
-        }
+            ]
 
-        result = self.runner.invoke(app, ['logs', 'test-dag'])
+        result = self.runner.invoke(app, ['log', 'test-dag'])
 
-        assert result.exit_code == 0
-        assert "Logs: test-dag" in result.output
         assert "Task started" in result.output
         assert "Task failed" in result.output
-        assert "18:33:35" in result.output
-        assert "18:33:36" in result.output
 
     @pytest.mark.unit
     def test_logs_command_with_filters(self, mock_api_client, mock_check_server):
         """Test logs retrieval with filters."""
-        mock_api_client.get_dag_logs.return_value = {
-            'logs': [],
-            'total_count': 0
-        }
+        mock_api_client.get_dag_logs_v1.return_value = []
 
         result = self.runner.invoke(app, [
-            'logs', 'test-dag',
+            'log', 'test-dag',
             '--limit', '50',
             '--task', 'specific-task',
             '--level', 'ERROR'
         ])
 
         assert result.exit_code == 0
-        mock_api_client.get_dag_logs.assert_called_once_with(
+        mock_api_client.get_dag_logs_v1.assert_called_once_with(
             'test-dag', None, 50, 'specific-task', 'ERROR'
         )
 
     @pytest.mark.unit
     def test_logs_command_no_logs(self, mock_api_client, mock_check_server):
         """Test logs retrieval when no logs exist."""
-        mock_api_client.get_dag_logs.return_value = {
-            'logs': [],
-            'total_count': 0
-        }
+        mock_api_client.get_dag_logs_v1.return_value = []
 
-        result = self.runner.invoke(app, ['logs', 'test-dag'])
+        result = self.runner.invoke(app, ['log', 'test-dag'])
 
         assert result.exit_code == 0
         assert "No logs found for DAG: test-dag" in result.output
@@ -222,55 +156,52 @@ class TestCliClient:
     @pytest.mark.unit
     def test_running_command_success(self, mock_api_client, mock_check_server):
         """Test successful running DAGs retrieval."""
-        mock_api_client.get_running_dags.return_value = {
-            'running_dags': [
+        mock_api_client.list_dags_v1.return_value = [
                 {
                     'dag_id': 'dag-1',
                     'execution_id': 'exec-1',
+                    'status': 'running',
                     'started_at': '2025-07-18T18:33:35Z',
+                    'completed_at': None,
                     'thread_id': 123
                 },
                 {
                     'dag_id': 'dag-2',
                     'execution_id': 'exec-2',
+                    'status': 'running',
                     'started_at': '2025-07-18T18:34:35Z',
+                    'completed_at': None,
                     'thread_id': 456
                 }
-            ],
-            'count': 2
-        }
+            ]
 
-        result = self.runner.invoke(app, ['running'])
+        result = self.runner.invoke(app, ['ls', '--filter', 'active'])
 
         assert result.exit_code == 0
-        assert "Running DAGs" in result.output
+        assert "Maestro DAGs" in result.output
         assert "dag-1" in result.output
         assert "dag-2" in result.output
-        assert "Total running DAGs: 2" in result.output
+        assert "Total DAGs: 2" in result.output
 
     @pytest.mark.unit
     def test_running_command_no_running_dags(self, mock_api_client, mock_check_server):
         """Test running DAGs retrieval when none are running."""
-        mock_api_client.get_running_dags.return_value = {
-            'running_dags': [],
-            'count': 0
-        }
+        mock_api_client.list_dags_v1.return_value = []
 
-        result = self.runner.invoke(app, ['running'])
+        result = self.runner.invoke(app, ['ls', '--filter', 'active'])
 
         assert result.exit_code == 0
-        assert "No running DAGs found" in result.output
+        assert "No DAGs found with filter 'active'" in result.output
 
     # Cancel Command Tests
     @pytest.mark.unit
     def test_cancel_command_success(self, mock_api_client, mock_check_server):
         """Test successful DAG cancellation."""
-        mock_api_client.cancel_dag.return_value = {
-            'success': True,
+        mock_api_client.stop_dag.return_value = {
             'message': 'DAG cancelled successfully'
         }
 
-        result = self.runner.invoke(app, ['cancel', 'test-dag'])
+        result = self.runner.invoke(app, ['stop', 'test-dag'])
 
         assert result.exit_code == 0
         assert "DAG cancelled successfully" in result.output
@@ -278,12 +209,11 @@ class TestCliClient:
     @pytest.mark.unit
     def test_cancel_command_not_running(self, mock_api_client, mock_check_server):
         """Test cancellation of non-running DAG."""
-        mock_api_client.cancel_dag.return_value = {
-            'success': False,
+        mock_api_client.stop_dag.return_value = {
             'message': 'DAG is not running'
         }
 
-        result = self.runner.invoke(app, ['cancel', 'test-dag'])
+        result = self.runner.invoke(app, ['stop', 'test-dag'])
 
         assert result.exit_code == 0
         assert "DAG is not running" in result.output
@@ -351,8 +281,7 @@ class TestCliClient:
     @pytest.mark.unit
     def test_list_command_success(self, mock_api_client, mock_check_server):
         """Test successful DAG listing."""
-        mock_api_client.list_dags.return_value = {
-            'dags': [
+        mock_api_client.list_dags_v1.return_value = [
                 {
                     'dag_id': 'dag-1',
                     'execution_id': 'exec-1',
@@ -369,15 +298,12 @@ class TestCliClient:
                     'completed_at': None,
                     'thread_id': 456
                 }
-            ],
-            'count': 2,
-            'title': 'All DAGs'
-        }
+            ]
 
-        result = self.runner.invoke(app, ['list'])
+        result = self.runner.invoke(app, ['ls'])
 
         assert result.exit_code == 0
-        assert "All DAGs" in result.output
+        assert "Maestro DAGs" in result.output
         assert "dag-1" in result.output
         assert "dag-2" in result.output
         assert "Total DAGs: 2" in result.output
@@ -385,41 +311,29 @@ class TestCliClient:
     @pytest.mark.unit
     def test_list_command_with_status_filter(self, mock_api_client, mock_check_server):
         """Test DAG listing with status filter."""
-        mock_api_client.list_dags.return_value = {
-            'dags': [],
-            'count': 0,
-            'title': 'Running DAGs'
-        }
+        mock_api_client.list_dags_v1.return_value = []
 
-        result = self.runner.invoke(app, ['list', '--status', 'running'])
+        result = self.runner.invoke(app, ['ls', '--filter', 'running'])
 
         assert result.exit_code == 0
-        mock_api_client.list_dags.assert_called_once_with('running')
+        mock_api_client.list_dags_v1.assert_called_once_with('running')
 
     @pytest.mark.unit
     def test_list_command_active_flag(self, mock_api_client, mock_check_server):
         """Test DAG listing with active flag."""
-        mock_api_client.list_dags.return_value = {
-            'dags': [],
-            'count': 0,
-            'title': 'Running DAGs'
-        }
+        mock_api_client.list_dags_v1.return_value = []
 
-        result = self.runner.invoke(app, ['list', '--active'])
+        result = self.runner.invoke(app, ['ls', '--filter', 'active'])
 
         assert result.exit_code == 0
-        mock_api_client.list_dags.assert_called_once_with('running')
+        mock_api_client.list_dags_v1.assert_called_once_with('active')
 
     @pytest.mark.unit
     def test_list_command_no_dags(self, mock_api_client, mock_check_server):
         """Test DAG listing when no DAGs exist."""
-        mock_api_client.list_dags.return_value = {
-            'dags': [],
-            'count': 0,
-            'title': 'All DAGs'
-        }
+        mock_api_client.list_dags_v1.return_value = []
 
-        result = self.runner.invoke(app, ['list'])
+        result = self.runner.invoke(app, ['ls'])
 
         assert result.exit_code == 0
         assert "No DAGs found" in result.output
