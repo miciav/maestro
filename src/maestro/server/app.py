@@ -1,67 +1,16 @@
 #!/usr/bin/env python3
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from fastapi import FastAPI
+from typing import Optional
 import uvicorn
-import asyncio
-import json
-import time
-from datetime import datetime
 import logging
-import threading
 from contextlib import asynccontextmanager
-from maestro.core.dag import DAG
 from maestro.core.orchestrator import Orchestrator
 from maestro.core.status_manager import StatusManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Global orchestrator instance
-
-
-# Pydantic models for API requests/responses
-class DAGSubmissionRequest(BaseModel):
-    dag_file_path: str
-    dag_id: Optional[str] = None
-    resume: bool = False
-    fail_fast: bool = True
-
-class DAGSubmissionResponse(BaseModel):
-    dag_id: str
-    execution_id: str
-    status: str
-    submitted_at: str
-    message: str
-
-class DAGStatusResponse(BaseModel):
-    dag_id: str
-    execution_id: str
-    status: str
-    started_at: Optional[str]
-    completed_at: Optional[str]
-    thread_id: Optional[str]
-    tasks: List[Dict[str, Any]]
-
-class LogEntry(BaseModel):
-    task_id: str
-    level: str
-    message: str
-    timestamp: str
-    thread_id: str
-
-class LogsResponse(BaseModel):
-    dag_id: str
-    execution_id: Optional[str]
-    logs: List[LogEntry]
-    total_count: int
-
-class RunningDAGsResponse(BaseModel):
-    running_dags: List[Dict[str, Any]]
-    count: int
 
 from rich.console import Console
 from rich.text import Text
@@ -109,9 +58,6 @@ async def lifespan(app: FastAPI, db_path: Optional[str] = None):
     status_manager = StatusManager(db_path)
     app.state.orchestrator = Orchestrator(log_level="INFO", status_manager=status_manager)
     
-    # Pass the orchestrator instance to the Docker API module
-    docker_api.orchestrator = app.state.orchestrator
-    
     # Ensure database tables are created
     with app.state.orchestrator.status_manager as sm:
         # This will trigger table creation if they don't exist
@@ -147,9 +93,7 @@ async def lifespan(app: FastAPI, db_path: Optional[str] = None):
         # Dispose of the SQLAlchemy engine to close all connections
         app.state.orchestrator.status_manager.engine.dispose()
 
-# Import the new Docker-inspired API
-from maestro.server.docker_api import router as docker_router
-from maestro.server import docker_api
+from maestro.server.api.v1.router import api_router as api_v1_router
 
 # Create FastAPI app with lifespan
 app = FastAPI(
@@ -159,8 +103,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Mount the new Docker-inspired API
-app.include_router(docker_router)
+# Include API v1 routes
+app.include_router(api_v1_router)
 
 @app.get("/")
 async def root():
