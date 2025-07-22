@@ -13,8 +13,10 @@ from maestro.tasks.base import BaseTask
 from maestro.server.internals.task_registry import TaskRegistry
 from maestro.server.internals.dag_loader import DAGLoader
 from maestro.server.internals.status_manager import StatusManager
-from maestro.server.internals.executors.factory import ExecutorFactory
 
+from maestro.server.internals.executors.factory import ExecutorFactory
+from maestro.server.schedulers import create_scheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 
 class DatabaseLogHandler(logging.Handler):
     """Custom logging handler that writes to StatusManager database."""
@@ -61,16 +63,14 @@ class Orchestrator:
         elif db_path:
             self.status_manager = StatusManager(db_path)
         else:
-            # This case should ideally not be hit if db_path has a default value.
             self.status_manager = StatusManager()
         self.executor_factory = ExecutorFactory()
         self._setup_logging(log_level)
 
         self.executor = ThreadPoolExecutor(max_workers=10)
-        # Dictionary to track cancellation events for each execution
         self._execution_stop_events: Dict[str, threading.Event] = {}
-        # Thread pool for concurrent task execution
         self.task_executor = ThreadPoolExecutor(max_workers=10)
+
 
     def _setup_logging(self, log_level: str):
         """Setup logging with Rich handler."""
@@ -109,13 +109,55 @@ class Orchestrator:
         """Load and validate DAG from YAML file."""
         return self.dag_loader.load_dag_from_file(filepath, dag_id=dag_id)
 
+    def schedule_dag(self, dag: DAG):
+        """Schedules a DAG to run based on its cron schedule."""
+        if not dag.cron_schedule:
+            self.logger.warning(f"DAG {dag.dag_id} has no cron schedule. Cannot schedule.")
+            return
+
+        job_id = f"dag:{dag.dag_id}"
+        self.scheduler.add_job(
+            self.execute_scheduled_dag,
+            trigger='cron',
+            id=job_id,
+            name=dag.dag_id,
+            args=[dag.dag_id],
+            replace_existing=True,
+            **dag.cron_schedule_to_aps_kwargs()
+        )
+        self.logger.info(f"DAG {dag.dag_id} scheduled with cron: {dag.cron_schedule}")
+
+    def unschedule_dag(self, dag_id: str):
+        """Removes a DAG from the scheduler."""
+        job_id = f"dag:{dag_id}"
+        try:
+            self.scheduler.remove_job(job_id)
+            self.logger.info(f"DAG {dag_id} unscheduled.")
+        except JobLookupError:
+            self.logger.warning(f"Job for DAG {dag_id} not found in scheduler.")
+
+    def execute_scheduled_dag(self, dag_id: str):
+        """Function called by the scheduler to run a DAG."""
+        self.logger.info(f"Scheduler triggered for DAG: {dag_id}")
+        dag_filepath = self.status_manager.get_dag_filepath(dag_id)
+        if not dag_filepath:
+            self.logger.error(f"No file path found for scheduled DAG {dag_id}. Cannot execute.")
+            return
+
+        try:
+            dag = self.load_dag_from_file(dag_filepath, dag_id=dag_id)
+            self.run_dag_in_thread(dag, dag_filepath=dag_filepath)
+        except Exception as e:
+            self.logger.error(f"Failed to execute scheduled DAG {dag_id}: {e}")
+
     def run_dag_in_thread(
         self,
         dag: DAG,
         execution_id: str = None,
         resume: bool = False,
         fail_fast: bool = True,
-        status_callback=None
+        status_callback=None,
+        dag_filepath: Optional[str] = None  # Add this parameter
     ) -> str:
         """Execute DAG in a separate thread with concurrency."""
         # Use provided execution_id or generate a new one
@@ -138,7 +180,7 @@ class Orchestrator:
                 # Tasks should already exist for this execution, don't reinitialize
             else:
                 # Create new execution
-                sm.create_dag_execution(dag.dag_id, execution_id)
+                sm.create_dag_execution(dag.dag_id, execution_id, dag_filepath=dag_filepath)
                 # Initialize all tasks with pending status only if not resuming
                 if not resume:
                     task_ids = list(dag.tasks.keys())

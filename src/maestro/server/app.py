@@ -13,7 +13,19 @@ from maestro.server.internals.orchestrator import Orchestrator
 from maestro.server.internals.status_manager import StatusManager
 from maestro.shared.dag import DAG
 
+from maestro.server.services.scheduler_service import SchedulerService
+
 # --- Pydantic Models ---
+
+class DAGDefinitionRequest(BaseModel):
+    dag_file_path: str
+    dag_id: Optional[str] = None
+
+class DAGDefinitionResponse(BaseModel):
+    dag_id: str
+    status: str
+    message: str
+    created_at: str
 
 class DAGSubmissionRequest(BaseModel):
     dag_file_path: str
@@ -103,6 +115,8 @@ async def lifespan(app: FastAPI, db_path: Optional[str] = None):
     logger.info(f"[DEBUG] Initializing Maestro server with database: {db_path}") # Added debug log
     status_manager = StatusManager(db_path)
     app.state.orchestrator = Orchestrator(log_level="INFO", status_manager=status_manager)
+    app.state.scheduler_service = SchedulerService(orchestrator=app.state.orchestrator, db_uri=status_manager.db_uri)
+    app.state.scheduler_service.start()
     
     # Ensure database tables are created
     with app.state.orchestrator.status_manager as sm:
@@ -136,6 +150,7 @@ async def lifespan(app: FastAPI, db_path: Optional[str] = None):
         # Shutdown executors
         app.state.orchestrator.executor.shutdown(wait=True)
         app.state.orchestrator.task_executor.shutdown(wait=True)
+        app.state.scheduler_service.shutdown()
         # Dispose of the SQLAlchemy engine to close all connections
         app.state.orchestrator.status_manager.engine.dispose()
 
@@ -157,54 +172,67 @@ async def root():
     """Health check endpoint"""
     return {"message": "Maestro API Server", "status": "running", "timestamp": datetime.now().isoformat()}
 
-@app.post("/dags/submit", response_model=DAGSubmissionResponse)
-async def submit_dag(request: DAGSubmissionRequest, background_tasks: BackgroundTasks):
-    """Submit a DAG for execution"""
+@app.post("/dags", response_model=DAGDefinitionResponse)
+async def create_dag_definition(request: DAGDefinitionRequest):
+    """Create or update a DAG definition from a file."""
     try:
-        # Generate or check provided DAG ID
-        if request.dag_id is not None:
-            dag_id: str = request.dag_id.strip()
-            
-            # Validate DAG ID format
-            with app.state.orchestrator.status_manager as sm:
-                if not sm.validate_dag_id(dag_id):
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"Invalid DAG ID format: '{dag_id}'. Must contain only alphanumeric characters, underscores, and hyphens."
-                    )
-                
-                # Check uniqueness of provided DAG ID
-                if not sm.check_dag_id_uniqueness(dag_id):
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"DAG ID '{dag_id}' already exists. Please choose a different DAG ID."
-                    )
-        else:
-            with app.state.orchestrator.status_manager as sm:
-                dag_id: str = sm.generate_unique_dag_id()
+        dag = app.state.orchestrator.load_dag_from_file(request.dag_file_path, dag_id=request.dag_id)
 
-        # Load and validate DAG
-        dag: DAG = app.state.orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
-        
-        # Start DAG execution in background
-        execution_id = app.state.orchestrator.run_dag_in_thread(
-            dag=dag,
-            resume=request.resume,
-            fail_fast=request.fail_fast 
-        )
-        
-        return DAGSubmissionResponse(
+        # Save definition and file path
+        with app.state.orchestrator.status_manager as sm:
+            sm.save_dag_definition(dag, request.dag_file_path)
+
+        # If it's a scheduled DAG, add it to the scheduler in a paused state
+        if dag.cron_schedule:
+            app.state.scheduler_service.schedule_dag(dag, paused=True)
+            status = "scheduled_paused"
+            message = f"DAG definition '{dag.dag_id}' created and schedule paused."
+        else:
+            status = "created"
+            message = f"DAG definition '{dag.dag_id}' created."
+
+        return DAGDefinitionResponse(
             dag_id=dag.dag_id,
-            execution_id=execution_id,
-            status="submitted",
-            submitted_at=datetime.now().isoformat(),
-            message=f"DAG {dag.dag_id} submitted successfully"
+            status=status,
+            message=message,
+            created_at=datetime.now().isoformat()
         )
     except Exception as e:
-        logger.error(f"Failed to submit DAG: {e}")
+        logger.error(f"Failed to create DAG definition: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.get("/dags/{dag_id}/status", response_model=DAGStatusResponse)
+
+@app.post("/dags/{dag_id}/start")
+async def start_dag(dag_id: str):
+    """Start a single execution of a DAG."""
+    try:
+        dag_filepath = app.state.orchestrator.status_manager.get_dag_filepath(dag_id)
+        if not dag_filepath:
+            raise HTTPException(status_code=404, detail=f"DAG definition not found for {dag_id}")
+
+        dag = app.state.orchestrator.load_dag_from_file(dag_filepath, dag_id=dag_id)
+        execution_id = app.state.orchestrator.run_dag_in_thread(dag, dag_filepath=dag_filepath)
+
+        return {
+            "dag_id": dag_id,
+            "execution_id": execution_id,
+            "status": "started"
+        }
+    except Exception as e:
+        logger.error(f"Failed to start DAG {dag_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/dags/{dag_id}/schedule/start")
+async def resume_dag_schedule(dag_id: str):
+    """Resume a paused DAG schedule."""
+    app.state.scheduler_service.resume_dag_schedule(dag_id)
+    return {"message": f"Schedule for DAG {dag_id} resumed."}
+
+@app.post("/dags/{dag_id}/schedule/stop")
+async def pause_dag_schedule(dag_id: str):
+    """Pause a DAG schedule."""
+    app.state.scheduler_service.pause_dag_schedule(dag_id)
+    return {"message": f"Schedule for DAG {dag_id} paused."}
 async def get_dag_status(dag_id: str, execution_id: Optional[str] = None):
     """Get status of a specific DAG execution"""
     try:

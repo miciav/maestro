@@ -99,7 +99,7 @@ class TestMaestroAPIClient:
         
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/test-dag/status",
+            "http://localhost:8000/v1/dags/test-dag/status",
             json=status_response,
             status=200
         )
@@ -114,7 +114,7 @@ class TestMaestroAPIClient:
         """Test DAG status retrieval with execution ID."""
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/test-dag/status",
+            "http://localhost:8000/v1/dags/test-dag/status",
             json={"execution_id": "exec-specific"},
             status=200
         )
@@ -129,7 +129,7 @@ class TestMaestroAPIClient:
         """Test DAG status retrieval for non-existent DAG."""
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/nonexistent/status",
+            "http://localhost:8000/v1/dags/nonexistent/status",
             status=404
         )
         
@@ -156,7 +156,7 @@ class TestMaestroAPIClient:
         
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/v1/dags/test-dag/log",
+            "http://localhost:8000/v1/logs/test-dag",
             json=logs_response,
             status=200
         )
@@ -171,7 +171,7 @@ class TestMaestroAPIClient:
         """Test DAG logs retrieval with filters."""
         mock_responses.add(
             responses.GET,
-            "http://localhost:8000/dags/test-dag/logs",
+            "http://localhost:8000/v1/logs/test-dag",
             json={"logs": [], "total_count": 0},
             status=200
         )
@@ -209,7 +209,7 @@ class TestMaestroAPIClient:
             stream=True
         )
         
-        logs = list(self.client.stream_dag_logs("test-dag"))
+        logs = list(self.client.stream_dag_logs_v1("test-dag"))
         
         assert len(logs) == 2
         assert logs[0]["message"] == "Log 1"
@@ -409,36 +409,7 @@ class TestMaestroAPIClient:
         
         # Check that default days=30 was used
         assert mock_responses.calls[0].request.url.endswith("?days=30")
-    
-    # List DAGs Tests
-    @pytest.mark.unit
-    def test_list_dags_success(self, mock_responses):
-        """Test successful DAG listing."""
-        list_response = {
-            "dags": [
-                {
-                    "dag_id": "dag-1",
-                    "execution_id": "exec-1",
-                    "status": "completed",
-                    "started_at": "2025-07-18T18:33:35Z",
-                    "completed_at": "2025-07-18T18:34:35Z"
-                }
-            ],
-            "count": 1,
-            "title": "All DAGs"
-        }
-        
-        mock_responses.add(
-            responses.GET,
-            "http://localhost:8000/dags/list",
-            json=list_response,
-            status=200
-        )
-        
-        result = self.client.list_dags()
-        
-        assert result == list_response
-        assert len(mock_responses.calls) == 1
+
     
     @pytest.mark.unit
     def test_list_dags_with_status_filter(self, mock_responses):

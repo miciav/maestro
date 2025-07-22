@@ -1,9 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
-from maestro.server.app import app
-from maestro.core.status_manager import StatusManager
 import os
 import time
+
+from maestro.server.internals.orchestrator import Orchestrator
+
 
 @pytest.fixture(scope="function")
 def client():
@@ -30,8 +31,8 @@ def client():
 
     from maestro.server.app import app
     # Import docker_api to set the orchestrator
-    from maestro.server import docker_api
-    from maestro.core.orchestrator import Orchestrator
+
+    from maestro.server.api.v1.router import dags
     
     # Create an orchestrator instance for testing
     test_orchestrator = Orchestrator(log_level="INFO", db_path=test_db_path)

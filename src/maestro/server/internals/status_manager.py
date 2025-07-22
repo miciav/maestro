@@ -104,10 +104,16 @@ class StatusManager:
                 session.query(TaskORM).filter_by(dag_id=dag_id).delete()
                 session.query(ExecutionORM).filter_by(dag_id=dag_id).delete()
 
-    def create_dag_execution(self, dag_id: str, execution_id: str) -> str:
+    def create_dag_execution(self, dag_id: str, execution_id: str, dag_filepath: Optional[str] = None) -> str:
         with self.Session.begin() as session:
             execution = ExecutionORM(id=execution_id, dag_id=dag_id, status="running", started_at=datetime.now(), thread_id=str(threading.current_thread().ident), pid=threading.current_thread().ident)
             session.add(execution)
+            dag = session.query(DagORM).filter_by(id=dag_id).first()
+            if not dag:
+                dag = DagORM(id=dag_id, dag_filepath=dag_filepath)
+                session.add(dag)
+            elif dag_filepath:
+                dag.dag_filepath = dag_filepath
             return execution_id
 
     def create_dag_execution_with_status(self, dag_id: str, execution_id: str, status: str) -> str:
@@ -343,9 +349,7 @@ class StatusManager:
     def get_dag_definition(self, dag_id: str) -> Optional[Dict]:
         with self.Session() as session:
             dag = session.query(DagORM).filter_by(id=dag_id).first()
-            if dag and dag.definition:
-                return json.loads(dag.definition)
-            return None
+            return dag.dag_filepath if dag else None
 
     def delete_dag(self, dag_id: str) -> int:
         with self.Session.begin() as session:

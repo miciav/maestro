@@ -2,10 +2,10 @@ import pytest
 import os
 import uuid
 
-from maestro.core.orchestrator import Orchestrator
+from maestro.server.internals.orchestrator import Orchestrator
 from maestro.tasks.base import BaseTask
-from maestro.core.task import TaskStatus
-from maestro.core.status_manager import StatusManager
+from maestro.shared.task import TaskStatus
+from maestro.server.internals.status_manager import StatusManager
 
 # Define a dummy task for testing
 class DummyPrintTask(BaseTask):

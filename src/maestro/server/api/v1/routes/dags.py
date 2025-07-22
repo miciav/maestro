@@ -147,53 +147,6 @@ async def create_dag(request: DAGCreateRequest, orchestrator: Orchestrator = Dep
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/submit", response_model=DAGSubmissionResponse)
-async def submit_dag(request: DAGSubmissionRequest, background_tasks: BackgroundTasks, orchestrator: Orchestrator = Depends(get_orchestrator)):
-    """Submit a DAG for execution (create and run in one step)"""
-    try:
-        # Generate or check provided DAG ID
-        if request.dag_id is not None:
-            dag_id: str = request.dag_id.strip()
-            
-            # Validate DAG ID format
-            with orchestrator.status_manager as sm:
-                if not sm.validate_dag_id(dag_id):
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"Invalid DAG ID format: '{dag_id}'. Must contain only alphanumeric characters, underscores, and hyphens."
-                    )
-                
-                # Check uniqueness of provided DAG ID
-                if not sm.check_dag_id_uniqueness(dag_id):
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"DAG ID '{dag_id}' already exists. Please choose a different DAG ID."
-                    )
-        else:
-            with orchestrator.status_manager as sm:
-                dag_id: str = sm.generate_unique_dag_id()
-
-        # Load and validate DAG
-        dag: DAG = orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
-        
-        # Start DAG execution in background
-        execution_id = orchestrator.run_dag_in_thread(
-            dag=dag,
-            resume=request.resume,
-            fail_fast=request.fail_fast 
-        )
-        
-        return DAGSubmissionResponse(
-            dag_id=dag.dag_id,
-            execution_id=execution_id,
-            status="submitted",
-            submitted_at=datetime.now().isoformat(),
-            message=f"DAG {dag.dag_id} submitted successfully"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.post("/{dag_id}/run", response_model=DAGRunResponse)
 async def run_dag(dag_id: str, request: DAGRunRequest, background_tasks: BackgroundTasks, orchestrator: Orchestrator = Depends(get_orchestrator)):
     """

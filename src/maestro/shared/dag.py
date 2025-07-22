@@ -146,3 +146,20 @@ class DAG:
             "cron_schedule": self.cron_schedule,
             "tasks": {task_id: task.to_dict() for task_id, task in self.tasks.items()}
         }
+
+    def cron_schedule_to_aps_kwargs(self) -> Dict[str, str]:
+        """Converts a cron schedule string to a dictionary of arguments for APScheduler."""
+        if not self.cron_schedule:
+            return {}
+
+        parts = self.cron_schedule.split()
+        if len(parts) != 5:
+            raise ValueError("Invalid cron schedule format. Expected 5 parts.")
+
+        return {
+            "minute": parts[0],
+            "hour": parts[1],
+            "day": parts[2],
+            "month": parts[3],
+            "day_of_week": parts[4],
+        }

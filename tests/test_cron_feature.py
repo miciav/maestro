@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timedelta
-from maestro.core.dag import DAG
+from maestro.shared.dag import DAG
 
 def test_valid_cron_expression():
     cron_schedule = "0 9 * * *"  # Every day at 9:00 AM

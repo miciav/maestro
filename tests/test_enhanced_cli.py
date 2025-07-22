@@ -4,9 +4,9 @@ import uuid
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta
 
-from maestro.core.status_manager import StatusManager
-from maestro.core.orchestrator import Orchestrator
-from maestro.core.dag import DAG
+from maestro.server.internals.status_manager import StatusManager
+from maestro.server.internals.orchestrator import Orchestrator
+from maestro.shared.dag import DAG
 from maestro.tasks.base import BaseTask
 
 

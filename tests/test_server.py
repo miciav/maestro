@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from maestro.server.app import app, lifespan
-from maestro.core.dag import DAG
-from maestro.core.task import Task
+from maestro.shared.dag import DAG
+from maestro.shared.task import Task
 
 # Create a concrete implementation of the abstract Task class for testing purposes
 class ConcreteTask(Task):

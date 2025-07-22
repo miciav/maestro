@@ -1,7 +1,7 @@
 import pytest
 import threading
 import uuid
-from maestro.core.status_manager import StatusManager
+from maestro.server.internals.status_manager import StatusManager
 from datetime import datetime, timedelta
 
 @pytest.fixture

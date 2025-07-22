@@ -66,7 +66,7 @@ class MaestroAPIClient:
     
     def get_dag_status(self, dag_id: str, execution_id: Optional[str] = None) -> Dict[str, Any]:
         """Get status of a specific DAG execution"""
-        endpoint = f"/dags/{dag_id}/status"
+        endpoint = f"/v1/dags/{dag_id}/status"
         params = {}
         if execution_id:
             params["execution_id"] = execution_id
@@ -74,11 +74,14 @@ class MaestroAPIClient:
         response = self._make_request("GET", endpoint, params=params)
         return response.json()
     
-    def get_dag_logs_v1(self, dag_id: str, execution_id: Optional[str] = None, 
-                     limit: int = 100, task_filter: Optional[str] = None, 
-                     level_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_dag_logs_v1(self,
+                        dag_id: str,
+                        execution_id: Optional[str] = None,
+                        limit: int = 100,
+                        task_filter: Optional[str] = None,
+                        level_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get logs for a specific DAG execution using the v1 API"""
-        endpoint = f"/v1/dags/{dag_id}/log"
+        endpoint = f"/v1/logs/{dag_id}"
         params = {"limit": limit}
         
         if execution_id:
@@ -90,7 +93,8 @@ class MaestroAPIClient:
         
         response = self._make_request("GET", endpoint, params=params)
         return response.json()
-    
+
+    # TODO: refactor, this is used only for testing
     def stream_dag_logs_v1(self, dag_id: str, execution_id: Optional[str] = None,
                        task_filter: Optional[str] = None, 
                        level_filter: Optional[str] = None) -> Iterator[Dict[str, Any]]:
@@ -164,15 +168,19 @@ class MaestroAPIClient:
         params = {"force": force}
         response = self._make_request("DELETE", endpoint, params=params)
         return response.json()
-    
+
+    # TODO: refactor. This function is used only for test
     def list_dags(self, status_filter: Optional[str] = None) -> Dict[str, Any]:
         """List all DAGs with optional status filtering (legacy)"""
         # This method is now a wrapper around list_dags_v1
         # It's kept for backward compatibility with the old CLI 'list' command
+
         if status_filter == "running":
-            return {"dags": self.list_dags_v1("active"), "title": "Running DAGs", "count": len(self.list_dags_v1("active"))}
+            active_dag_lst = self.list_dags_v1("active")
+            return {"dags": active_dag_lst, "title": "Running DAGs", "count": len(active_dag_lst)}
         else:
-            return {"dags": self.list_dags_v1("all"), "title": "All DAGs", "count": len(self.list_dags_v1("all"))}
+            all_dag_lst = self.list_dags_v1("all")
+            return {"dags": all_dag_lst, "title": "All DAGs", "count": len(all_dag_lst)}
 
     def list_dags_v1(self, filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """List all DAGs with optional filtering using the v1 API"""

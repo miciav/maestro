@@ -21,7 +21,7 @@ print(f"Run response: {response.status_code} - {response.json()}")
 time.sleep(2)
 
 # Check status
-response = requests.get(f"{base_url}/dags/test_run_manual/status")
+response = requests.get(f"{base_url}/v1/dags/test_run_manual/status")
 print(f"Status response: {response.status_code} - {response.json()}")
 
 # List all DAGs

@@ -11,6 +11,7 @@ class DagORM(Base):
 
     id = Column(String, primary_key=True)
     definition = Column(Text)
+    dag_filepath = Column(String)
     created_at = Column(DateTime, server_default=func.now())
     executions = relationship("ExecutionORM", back_populates="dag", cascade="all, delete-orphan")
 
