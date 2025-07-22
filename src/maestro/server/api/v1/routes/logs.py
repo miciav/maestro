@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 
-from maestro.core.orchestrator import Orchestrator
+from maestro.server.internals.orchestrator import Orchestrator
 
 # Configure logging
 logger = logging.getLogger(__name__)

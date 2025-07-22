@@ -7,7 +7,7 @@ import asyncio
 import json
 import uuid
 
-from maestro.core.orchestrator import Orchestrator
+from maestro.server.internals.orchestrator import Orchestrator
 
 # Module-level orchestrator variable that will be set by the app
 orchestrator = None

@@ -7,8 +7,8 @@ import json
 import uuid
 from datetime import datetime
 
-from maestro.core.dag import DAG
-from maestro.core.orchestrator import Orchestrator
+from maestro.shared.dag import DAG
+from maestro.server.internals.orchestrator import Orchestrator
 
 # Router for DAG-related endpoints
 router = APIRouter(

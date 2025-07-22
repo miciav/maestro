@@ -1,12 +1,58 @@
 #!/usr/bin/env python3
 
-from fastapi import FastAPI
-from typing import Optional
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import Optional, Any, List, Dict
 import uvicorn
 import logging
+import asyncio
+from datetime import datetime
 from contextlib import asynccontextmanager
-from maestro.core.orchestrator import Orchestrator
-from maestro.core.status_manager import StatusManager
+from maestro.server.internals.orchestrator import Orchestrator
+from maestro.server.internals.status_manager import StatusManager
+from maestro.shared.dag import DAG
+
+# --- Pydantic Models ---
+
+class DAGSubmissionRequest(BaseModel):
+    dag_file_path: str
+    dag_id: Optional[str] = None
+    resume: bool = False
+    fail_fast: bool = True
+
+class DAGSubmissionResponse(BaseModel):
+    dag_id: str
+    execution_id: str
+    status: str
+    submitted_at: str
+    message: str
+
+class DAGStatusResponse(BaseModel):
+    dag_id: str
+    execution_id: str
+    status: str
+    started_at: Optional[str]
+    completed_at: Optional[str]
+    thread_id: Optional[str]
+    tasks: List[Dict[str, Any]]
+
+class RunningDAGsResponse(BaseModel):
+    running_dags: List[Dict[str, Any]]
+    count: int
+
+class LogEntry(BaseModel):
+    task_id: str
+    level: str
+    message: str
+    timestamp: str
+    thread_id: str
+
+class LogsResponse(BaseModel):
+    dag_id: str
+    execution_id: Optional[str]
+    logs: List[LogEntry]
+    total_count: int
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
