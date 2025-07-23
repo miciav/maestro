@@ -300,7 +300,7 @@ dag:
 
 To create a custom task, you need to:
 
-1.  Create a new class that inherits from `maestro.tasks.base.BaseTask`.
+1.  Create a new class that inherits from `maestro.server.tasks.base.BaseTask`.
 2.  Define the parameters for your task as Pydantic fields.
 3.  Implement the `execute` method.
 4.  Register your new task in the `Orchestrator`'s `task_types` dictionary.

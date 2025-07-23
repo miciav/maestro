@@ -6,7 +6,7 @@ from pydantic import BaseModel, ValidationError
 
 from maestro.shared.dag import DAG
 from maestro.shared.task import Task, TaskStatus
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 from maestro.server.internals.task_registry import TaskRegistry
 
 class DAGConfig(BaseModel):

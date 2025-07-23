@@ -1,6 +1,6 @@
 import typing
 
-from maestro.tasks import BaseTask
+from maestro.server.tasks import BaseTask
 
 
 class TaskRegistry:
@@ -12,12 +12,12 @@ class TaskRegistry:
 
     def _load_builtin_tasks(self):
         """Load built-in task types."""
-        from maestro.tasks.print_task import PrintTask
-        from maestro.tasks.file_writer_task import FileWriterTask
-        from maestro.tasks.wait_task import WaitTask
-        from maestro.tasks.terraform_task import TerraformTask
-        from maestro.tasks.ansible_task import AnsibleTask
-        from maestro.tasks.extended_terraform_task import ExtendedTerraformTask
+        from maestro.server.tasks.print_task import PrintTask
+        from maestro.server.tasks.file_writer_task import FileWriterTask
+        from maestro.server.tasks.wait_task import WaitTask
+        from maestro.server.tasks.terraform_task import TerraformTask
+        from maestro.server.tasks.ansible_task import AnsibleTask
+        from maestro.server.tasks.extended_terraform_task import ExtendedTerraformTask
 
         self.register("PrintTask", PrintTask)
         self.register("FileWriterTask", FileWriterTask)

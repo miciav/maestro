@@ -11,7 +11,7 @@ import tempfile
 import os
 from unittest.mock import patch, Mock
 from typer.testing import CliRunner
-from maestro.cli_client import app
+from maestro.client.cli import app
 
 
 class TestCliIntegration:

@@ -9,13 +9,13 @@ from rich.logging import RichHandler
 
 from maestro.shared.dag import DAG, DAGStatus
 from maestro.shared.task import TaskStatus
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 from maestro.server.internals.task_registry import TaskRegistry
 from maestro.server.internals.dag_loader import DAGLoader
 from maestro.server.internals.status_manager import StatusManager
 
 from maestro.server.internals.executors.factory import ExecutorFactory
-from maestro.server.schedulers import create_scheduler
+
 from apscheduler.schedulers.background import BackgroundScheduler
 
 class DatabaseLogHandler(logging.Handler):
@@ -260,9 +260,9 @@ class Orchestrator:
 
             # Add the database handler to all task-related loggers
             task_loggers = [
-                'maestro.tasks.terraform_task',
-                'maestro.tasks.extended_terraform_task',
-                'maestro.tasks.print_task',
+                'maestro.server.tasks.terraform_task',
+                'maestro.server.tasks.extended_terraform_task',
+                'maestro.server.tasks.print_task',
                 'maestro.core.executors.ssh',
                 'maestro.core.executors.docker',
                 'maestro.core.executors.local'

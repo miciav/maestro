@@ -1,7 +1,7 @@
 
 import time
 
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 from rich import get_console
 
 

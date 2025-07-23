@@ -1,6 +1,7 @@
-
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.background import BackgroundScheduler
-from maestro.server.schedulers import create_scheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.executors.pool import ThreadPoolExecutor
 from maestro.server.internals.orchestrator import Orchestrator
 from maestro.shared.dag import DAG
 import logging
@@ -10,7 +11,31 @@ logger = logging.getLogger(__name__)
 class SchedulerService:
     def __init__(self, orchestrator: Orchestrator, db_uri: str):
         self.orchestrator = orchestrator
-        self.scheduler: BackgroundScheduler = create_scheduler(db_uri)
+        self.scheduler: BackgroundScheduler = self._create_scheduler(db_uri)
+
+    def _create_scheduler(self, db_uri: str) -> BackgroundScheduler:
+        """Creates and configures a BackgroundScheduler with a SQLAlchemy job store."""
+        jobstores = {
+            'default': SQLAlchemyJobStore(url=db_uri)
+        }
+        executors = {
+            'default': ThreadPoolExecutor(10),  # Pool of 10 threads for jobs
+        }
+        job_defaults = {
+            'coalesce': True,  # Run once if multiple runs were missed
+            'max_instances': 1,  # Only one instance of a job can run at a time
+            'misfire_grace_time': 600  # 10 minutes grace time for missed jobs
+        }
+
+        scheduler = BackgroundScheduler(
+            jobstores=jobstores,
+            executors=executors,
+            job_defaults=job_defaults,
+            timezone="UTC"  # Use UTC for consistency
+        )
+
+        logger.info("Scheduler created with SQLAlchemyJobStore.")
+        return scheduler
 
     def start(self):
         if not self.scheduler.running:
@@ -60,4 +85,3 @@ class SchedulerService:
         job_id = f"dag:{dag_id}"
         self.scheduler.pause_job(job_id)
         logger.info(f"Paused schedule for DAG {dag_id}")
-

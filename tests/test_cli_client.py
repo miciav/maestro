@@ -9,7 +9,7 @@ using mocks to isolate the client from server dependencies.
 import pytest
 from unittest.mock import patch, Mock, MagicMock
 from typer.testing import CliRunner
-from maestro.cli_client import app, check_server_connection
+from maestro.client.cli import app, check_server_connection
 import tempfile
 import os
 from io import StringIO

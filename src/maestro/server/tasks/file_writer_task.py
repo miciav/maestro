@@ -2,7 +2,7 @@ import os
 from typing import Literal
 from rich import get_console
 
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 
 class FileWriterTask(BaseTask):
     """A task that writes content to a file."""

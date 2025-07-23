@@ -7,7 +7,7 @@ import shutil
 
 # Import with proper error handling
 try:
-    from maestro.tasks.extended_terraform_task import (
+    from maestro.server.tasks.extended_terraform_task import (
         ExtendedTerraformTask,
         check_command_exists,
         print_status,
@@ -34,8 +34,8 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_full_workflow_execution(self, mock_which, mock_subprocess):
         """Test executing the full Terraform workflow."""
         # Mock terraform being available
@@ -60,8 +60,8 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_single_command_execution(self, mock_which, mock_subprocess):
         """Test executing a single Terraform command."""
         # Mock terraform being available
@@ -80,7 +80,7 @@ class TestExtendedTerraformTask:
 
     def test_missing_workflow_and_command(self):
         """Test handling of missing workflow_mode and command."""
-        with patch('maestro.tasks.terraform_task.shutil.which', return_value='/usr/bin/terraform'):
+        with patch('maestro.server.tasks.terraform_task.shutil.which', return_value='/usr/bin/terraform'):
             task = ExtendedTerraformTask(
                 task_id='test_task',
                 working_dir='.'
@@ -94,9 +94,9 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.extended_terraform_task.os.path.exists')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.extended_terraform_task.os.path.exists')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_full_workflow_with_existing_terraform_dir(self, mock_which, mock_exists, mock_subprocess):
         """Test full workflow when .terraform directory exists."""
         # Mock terraform being available
@@ -110,7 +110,7 @@ class TestExtendedTerraformTask:
         mock_subprocess.return_value = MagicMock(returncode=0, stdout='', stderr='')
         mock_exists.return_value = True
 
-        with patch('maestro.tasks.extended_terraform_task.Path.is_dir', return_value=True):
+        with patch('maestro.server.tasks.extended_terraform_task.Path.is_dir', return_value=True):
             task.execute_local()
 
         # Should call init with -upgrade flag
@@ -120,9 +120,9 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.extended_terraform_task.os.environ.get')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.extended_terraform_task.os.environ.get')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_full_workflow_with_skip_plan(self, mock_which, mock_environ, mock_subprocess):
         """Test full workflow with SKIP_PLAN environment variable."""
         # Mock terraform being available
@@ -145,9 +145,9 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.extended_terraform_task.os.chdir')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.extended_terraform_task.os.chdir')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_full_workflow_directory_change(self, mock_which, mock_chdir, mock_subprocess):
         """Test that the workflow changes directories correctly."""
         # Mock terraform being available
@@ -165,8 +165,8 @@ class TestExtendedTerraformTask:
         # Should change to the working directory and back
         assert mock_chdir.call_count == 2
 
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_full_workflow_exception_handling(self, mock_which, mock_subprocess):
         """Test that exceptions in workflow are handled properly."""
         # Mock terraform being available
@@ -185,7 +185,7 @@ class TestExtendedTerraformTask:
 
     def test_workflow_mode_field(self):
         """Test that workflow_mode field is properly set."""
-        with patch('maestro.tasks.terraform_task.shutil.which', return_value='/usr/bin/terraform'):
+        with patch('maestro.server.tasks.terraform_task.shutil.which', return_value='/usr/bin/terraform'):
             task = ExtendedTerraformTask(
                 task_id='test_task',
                 working_dir='.',
@@ -203,8 +203,8 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_single_command_with_workspace(self, mock_which, mock_subprocess):
         """Test single command execution with workspace."""
         # Mock terraform being available
@@ -227,8 +227,8 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_single_command_with_variables(self, mock_which, mock_subprocess):
         """Test single command execution with variables."""
         # Mock terraform being available
@@ -248,7 +248,7 @@ class TestExtendedTerraformTask:
 
     def test_print_functions(self):
         """Test the print utility functions."""
-        with patch('maestro.tasks.extended_terraform_task.logging.getLogger') as mock_logger:
+        with patch('maestro.server.tasks.extended_terraform_task.logging.getLogger') as mock_logger:
             mock_log = MagicMock()
             mock_logger.return_value = mock_log
 
@@ -265,7 +265,7 @@ class TestExtendedTerraformTask:
 
     def test_check_command_exists(self):
         """Test the check_command_exists function."""
-        with patch('maestro.tasks.extended_terraform_task.shutil.which') as mock_which:
+        with patch('maestro.server.tasks.extended_terraform_task.shutil.which') as mock_which:
             mock_which.return_value = '/usr/bin/terraform'
             assert check_command_exists('terraform') is True
 
@@ -276,8 +276,8 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
     def test_workflow_returns_value(self, mock_which, mock_subprocess):
         """Test that the workflow returns the expected value."""
         # Mock terraform being available
@@ -298,9 +298,9 @@ class TestExtendedTerraformTask:
         not shutil.which("terraform") and not shutil.which("tofu"),
         reason="Neither terraform nor tofu available in PATH"
     )
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
-    @patch('maestro.tasks.terraform_task.shutil.which')
-    @patch('maestro.tasks.extended_terraform_task.os.makedirs')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.os.makedirs')
     def test_workflow_with_relative_path(self, mock_makedirs, mock_which, mock_subprocess):
         """Test workflow execution with relative working directory."""
         # Mock terraform being available
@@ -328,8 +328,8 @@ class TestExtendedTerraformTask:
 class TestExtendedTerraformTaskMocked:
     """Tests that run entirely with mocks, regardless of terraform availability."""
 
-    @patch('maestro.tasks.terraform_task.shutil.which')
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
     def test_mock_full_workflow_execution(self, mock_subprocess, mock_which):
         """Test executing the full Terraform workflow with complete mocking."""
         # Mock terraform being available
@@ -347,8 +347,8 @@ class TestExtendedTerraformTaskMocked:
         # Verify the workflow executed successfully
         assert mock_subprocess.call_count == 7
 
-    @patch('maestro.tasks.terraform_task.shutil.which')
-    @patch('maestro.tasks.extended_terraform_task.subprocess.run')
+    @patch('maestro.server.tasks.terraform_task.shutil.which')
+    @patch('maestro.server.tasks.extended_terraform_task.subprocess.run')
     def test_mock_terraform_not_available(self, mock_subprocess, mock_which):
         """Test behavior when terraform is not available."""
         # Mock terraform NOT being available

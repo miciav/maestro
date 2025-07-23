@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from maestro.server.internals.status_manager import StatusManager
 from maestro.server.internals.orchestrator import Orchestrator
 from maestro.shared.dag import DAG
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 
 
 class SimpleTask(BaseTask):

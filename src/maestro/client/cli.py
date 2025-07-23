@@ -14,7 +14,7 @@ import subprocess
 import time
 import threading
 
-from maestro.client.api_client import MaestroAPIClient
+from .api_client import MaestroAPIClient
 
 app = typer.Typer(help="Maestro CLI Client - Communicate with Maestro REST API server")
 console = Console()

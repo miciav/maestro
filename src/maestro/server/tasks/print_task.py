@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 from rich import get_console
 
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 
 class PrintTask(BaseTask):
     """A task that prints a message to the console."""

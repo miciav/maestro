@@ -3,7 +3,7 @@ from datetime import datetime
 
 from maestro.server.internals.orchestrator import Orchestrator
 from maestro.shared.dag import DAG
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 from maestro.shared.task import TaskStatus
 from maestro.server.internals.executors.local import LocalExecutor
 

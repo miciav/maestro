@@ -24,7 +24,7 @@ dependencies = [
     ]
 
 [project.scripts]
-maestro = "maestro.cli_client:app"
+maestro = "maestro.client.cli:app"
 maestro-server = "maestro.server.app:start_server"
 
 [project.optional-dependencies]
