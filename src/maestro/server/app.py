@@ -115,7 +115,11 @@ async def lifespan(app: FastAPI, db_path: Optional[str] = None):
     logger.info(f"[DEBUG] Initializing Maestro server with database: {db_path}") # Added debug log
     status_manager = StatusManager(db_path)
     app.state.orchestrator = Orchestrator(log_level="INFO", status_manager=status_manager)
-    app.state.scheduler_service = SchedulerService(orchestrator=app.state.orchestrator, db_uri=status_manager.db_uri)
+    scheduler_db_uri = f"sqlite:///{status_manager.db_path}"
+    app.state.scheduler_service = SchedulerService(
+        orchestrator=app.state.orchestrator,
+        db_uri=scheduler_db_uri,
+    )
     app.state.scheduler_service.start()
     
     # Ensure database tables are created
@@ -233,6 +237,9 @@ async def pause_dag_schedule(dag_id: str):
     """Pause a DAG schedule."""
     app.state.scheduler_service.pause_dag_schedule(dag_id)
     return {"message": f"Schedule for DAG {dag_id} paused."}
+
+
+@app.get("/dags/{dag_id}/status", response_model=DAGStatusResponse)
 async def get_dag_status(dag_id: str, execution_id: Optional[str] = None):
     """Get status of a specific DAG execution"""
     try:

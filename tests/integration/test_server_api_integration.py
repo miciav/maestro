@@ -1,9 +1,13 @@
-import pytest
-from fastapi.testclient import TestClient
 import os
 import time
 
+import pytest
+from fastapi.testclient import TestClient
+
+from maestro.server.api.v1.routes import dags as dags_routes
+from maestro.server.api.v1.routes import logs as logs_routes
 from maestro.server.internals.orchestrator import Orchestrator
+from maestro.server.services.scheduler_service import SchedulerService
 
 
 @pytest.fixture(scope="function")
@@ -30,18 +34,42 @@ def client():
                 pass
 
     from maestro.server.app import app
-    # Import docker_api to set the orchestrator
 
-    from maestro.server.api.v1.router import dags
-    
-    # Create an orchestrator instance for testing
+    # Create an orchestrator instance and scheduler service for testing
     test_orchestrator = Orchestrator(log_level="INFO", db_path=test_db_path)
-    
-    # Override the orchestrator in docker_api module
-    docker_api.orchestrator = test_orchestrator
-    
+    scheduler_service = SchedulerService(
+        orchestrator=test_orchestrator,
+        db_uri=f"sqlite:///{test_db_path}"
+    )
+
+    def override_orchestrator():
+        return test_orchestrator
+
     with TestClient(app) as c:
-        yield c
+        original_orchestrator = getattr(app.state, "orchestrator", None)
+        original_scheduler = getattr(app.state, "scheduler_service", None)
+
+        if original_scheduler is not None and original_scheduler is not scheduler_service:
+            try:
+                original_scheduler.shutdown()
+            except Exception:
+                pass
+
+        app.state.orchestrator = test_orchestrator
+        app.state.scheduler_service = scheduler_service
+        scheduler_service.start()
+
+        app.dependency_overrides[dags_routes.get_orchestrator] = override_orchestrator
+        app.dependency_overrides[logs_routes.get_orchestrator] = override_orchestrator
+
+        try:
+            yield c
+        finally:
+            app.dependency_overrides.pop(dags_routes.get_orchestrator, None)
+            app.dependency_overrides.pop(logs_routes.get_orchestrator, None)
+            scheduler_service.shutdown()
+            app.state.orchestrator = original_orchestrator
+            app.state.scheduler_service = original_scheduler
     
     # Clean up test database after tests are done
     if os.path.exists(test_db_path):
