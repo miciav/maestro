@@ -1,11 +1,11 @@
 import pytest
 from datetime import datetime
 
-from maestro.core.orchestrator import Orchestrator
-from maestro.core.dag import DAG
-from maestro.tasks.base import BaseTask
-from maestro.core.task import TaskStatus
-from maestro.core.executors.local import LocalExecutor
+from maestro.server.internals.orchestrator import Orchestrator
+from maestro.shared.dag import DAG
+from maestro.server.tasks.base import BaseTask
+from maestro.shared.task import TaskStatus
+from maestro.server.internals.executors.local import LocalExecutor
 
 # Define a dummy task for testing
 class DummyPrintTask(BaseTask):

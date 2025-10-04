@@ -4,7 +4,7 @@ import tempfile
 import os
 
 from maestro.core.orchestrator import Orchestrator
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 from maestro.core.status_manager import StatusManager
 
 

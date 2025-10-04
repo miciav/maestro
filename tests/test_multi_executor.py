@@ -2,13 +2,13 @@ import pytest
 import time
 from unittest.mock import Mock, patch, MagicMock
 
-from maestro.core.orchestrator import Orchestrator
-from maestro.core.dag import DAG
-from maestro.tasks.base import BaseTask
-from maestro.core.task import TaskStatus
-from maestro.core.executors.factory import ExecutorFactory
-from maestro.core.executors.local import LocalExecutor
-from maestro.core.executors.base import BaseExecutor
+from maestro.server.internals.orchestrator import Orchestrator
+from maestro.shared.dag import DAG
+from maestro.server.tasks.base import BaseTask
+from maestro.shared.task import TaskStatus
+from maestro.server.internals.executors.factory import ExecutorFactory
+from maestro.server.internals.executors.local import LocalExecutor
+from maestro.server.internals.executors.base import BaseExecutor
 
 
 class MultiExecutorTestTask(BaseTask):

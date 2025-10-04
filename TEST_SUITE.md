@@ -188,7 +188,7 @@ uv run pytest tests/test_enhanced_cli.py -v
 import pytest
 from maestro.core.orchestrator import Orchestrator
 from maestro.core.dag import DAG
-from maestro.tasks.base import BaseTask
+from maestro.server.tasks.base import BaseTask
 
 class TestTask(BaseTask):
     def execute_local(self):

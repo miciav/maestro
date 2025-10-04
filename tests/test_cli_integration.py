@@ -11,7 +11,7 @@ import tempfile
 import os
 from unittest.mock import patch, Mock
 from typer.testing import CliRunner
-from maestro.cli_client import app
+from maestro.client.cli import app
 
 
 class TestCliIntegration:
@@ -111,7 +111,7 @@ tasks:
             'message': 'DAG cancelled successfully'
         }
         
-        mock_api_client.submit_dag.return_value = submit_response
+     #   mock_api_client.submit_dag.return_value = submit_response #submit api removed
         mock_api_client.get_dag_status.return_value = status_response
         mock_api_client.get_dag_logs.return_value = logs_response
         mock_api_client.cancel_dag.return_value = cancel_response
@@ -143,7 +143,7 @@ tasks:
         assert 'DAG cancelled successfully' in result.output
         
         # Verify all API calls were made
-        mock_api_client.submit_dag.assert_called_once()
+ #       mock_api_client.submit_dag.assert_called_once()
         mock_api_client.get_dag_status.assert_called_once()
         mock_api_client.get_dag_logs.assert_called_once()
         mock_api_client.cancel_dag.assert_called_once()
@@ -178,12 +178,12 @@ tasks:
     def test_dag_lifecycle_states(self, mock_api_client, mock_check_server, temp_dag_file):
         """Test DAG through different lifecycle states."""
         # Test 1: Submitted state
-        mock_api_client.submit_dag.return_value = {
-            'dag_id': 'lifecycle-dag',
-            'execution_id': 'exec-lifecycle',
-            'status': 'submitted',
-            'submitted_at': '2025-07-18T18:33:35Z'
-        }
+        # mock_api_client.submit_dag.return_value = {
+        #     'dag_id': 'lifecycle-dag',
+        #     'execution_id': 'exec-lifecycle',
+        #     'status': 'submitted',
+        #     'submitted_at': '2025-07-18T18:33:35Z'
+        # }
         
         result = self.runner.invoke(app, ['submit', temp_dag_file])
         assert result.exit_code == 0

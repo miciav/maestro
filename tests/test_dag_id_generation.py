@@ -5,7 +5,7 @@ Test cases for DAG ID generation and validation functionality.
 import pytest
 import re
 from unittest.mock import Mock, patch, MagicMock
-from maestro.core.status_manager import StatusManager, DOCKER_ADJECTIVES, DOCKER_NOUNS
+from maestro.server.internals.status_manager import StatusManager, DOCKER_ADJECTIVES, DOCKER_NOUNS
 import tempfile
 import os
 import sqlite3
@@ -199,7 +199,7 @@ class TestUniqueDAGIDGeneration:
             assert sm.check_dag_id_uniqueness(result)
             assert "_" in result
     
-    @patch('maestro.core.status_manager.random.choices')
+    @patch('maestro.server.internals.status_manager.random.choices')
     def test_generate_unique_dag_id_fallback_suffix(self, mock_choices):
         """Test fallback to suffix when max attempts reached."""
         mock_choices.return_value = ['a', 'b', 'c', 'd', 'e', 'f']

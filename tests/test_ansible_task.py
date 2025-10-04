@@ -3,7 +3,7 @@ import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock, call
-from maestro.tasks.ansible_task import AnsibleTask
+from maestro.server.tasks.ansible_task import AnsibleTask
 
 
 class TestAnsibleTask:
@@ -103,9 +103,9 @@ class TestAnsibleTask:
             assert inventory_path == str(inventory_abs)
             assert data_dir == str(data_dir_abs)
 
-    @patch('maestro.tasks.ansible_task.ansible_runner.run')
-    @patch('maestro.tasks.ansible_task.os.path.exists')
-    @patch('maestro.tasks.ansible_task.get_console')
+    @patch('maestro.server.tasks.ansible_task.ansible_runner.run')
+    @patch('maestro.server.tasks.ansible_task.os.path.exists')
+    @patch('maestro.server.tasks.ansible_task.get_console')
     def test_execute_local_success(self, mock_get_console, mock_exists, mock_ansible_run):
         """Test successful execution of ansible task."""
         mock_console = MagicMock()
@@ -132,9 +132,9 @@ class TestAnsibleTask:
         # Verify ansible_runner was called correctly
         mock_ansible_run.assert_called_once()
 
-    @patch('maestro.tasks.ansible_task.ansible_runner.run')
-    @patch('maestro.tasks.ansible_task.os.path.exists')
-    @patch('maestro.tasks.ansible_task.get_console')
+    @patch('maestro.server.tasks.ansible_task.ansible_runner.run')
+    @patch('maestro.server.tasks.ansible_task.os.path.exists')
+    @patch('maestro.server.tasks.ansible_task.get_console')
     def test_execute_local_failure(self, mock_get_console, mock_exists, mock_ansible_run):
         """Test failed execution of ansible task."""
         mock_console = MagicMock()
@@ -164,8 +164,8 @@ class TestAnsibleTask:
             style="red"
         )
 
-    @patch('maestro.tasks.ansible_task.os.path.exists')
-    @patch('maestro.tasks.ansible_task.get_console')
+    @patch('maestro.server.tasks.ansible_task.os.path.exists')
+    @patch('maestro.server.tasks.ansible_task.get_console')
     def test_execute_local_playbook_not_found(self, mock_get_console, mock_exists):
         """Test execution when playbook file doesn't exist."""
         mock_console = MagicMock()
@@ -188,8 +188,8 @@ class TestAnsibleTask:
         
         assert "Playbook not found" in str(exc_info.value)
 
-    @patch('maestro.tasks.ansible_task.os.path.exists')
-    @patch('maestro.tasks.ansible_task.get_console')
+    @patch('maestro.server.tasks.ansible_task.os.path.exists')
+    @patch('maestro.server.tasks.ansible_task.get_console')
     def test_execute_local_inventory_not_found(self, mock_get_console, mock_exists):
         """Test execution when inventory file doesn't exist."""
         mock_console = MagicMock()
@@ -212,9 +212,9 @@ class TestAnsibleTask:
         
         assert "Inventory not found" in str(exc_info.value)
 
-    @patch('maestro.tasks.ansible_task.ansible_runner.run')
-    @patch('maestro.tasks.ansible_task.os.path.exists')
-    @patch('maestro.tasks.ansible_task.get_console')
+    @patch('maestro.server.tasks.ansible_task.ansible_runner.run')
+    @patch('maestro.server.tasks.ansible_task.os.path.exists')
+    @patch('maestro.server.tasks.ansible_task.get_console')
     def test_execute_local_with_extra_vars(self, mock_get_console, mock_exists, mock_ansible_run):
         """Test execution with extra variables."""
         mock_console = MagicMock()
@@ -242,9 +242,9 @@ class TestAnsibleTask:
         assert call_args[1]['verbosity'] == 2
         assert call_args[1]['quiet'] is False
 
-    @patch('maestro.tasks.ansible_task.ansible_runner.run')
-    @patch('maestro.tasks.ansible_task.os.path.exists')
-    @patch('maestro.tasks.ansible_task.get_console')
+    @patch('maestro.server.tasks.ansible_task.ansible_runner.run')
+    @patch('maestro.server.tasks.ansible_task.os.path.exists')
+    @patch('maestro.server.tasks.ansible_task.get_console')
     def test_execute_local_with_become_user(self, mock_get_console, mock_exists, mock_ansible_run):
         """Test execution with become_user option."""
         mock_console = MagicMock()
@@ -268,9 +268,9 @@ class TestAnsibleTask:
         # Verify ansible_runner was called
         mock_ansible_run.assert_called_once()
 
-    @patch('maestro.tasks.ansible_task.ansible_runner.run')
-    @patch('maestro.tasks.ansible_task.os.path.exists')
-    @patch('maestro.tasks.ansible_task.get_console')
+    @patch('maestro.server.tasks.ansible_task.ansible_runner.run')
+    @patch('maestro.server.tasks.ansible_task.os.path.exists')
+    @patch('maestro.server.tasks.ansible_task.get_console')
     def test_execute_local_console_output(self, mock_get_console, mock_exists, mock_ansible_run):
         """Test that console output shows correct paths."""
         mock_console = MagicMock()

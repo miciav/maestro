@@ -2,8 +2,8 @@
 import pytest
 from datetime import datetime, timedelta
 
-from maestro.core.dag import DAG
-from maestro.core.task import Task
+from maestro.shared.dag import DAG
+from maestro.shared.task import Task
 
 class DummyTask(Task):
     def execute_local(self):

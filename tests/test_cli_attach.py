@@ -12,7 +12,7 @@ import time
 import unittest.mock
 from unittest.mock import patch, ANY
 from typer.testing import CliRunner
-from maestro.cli_client import app
+from maestro.client.cli import app
 
 
 class TestAttachCommand:

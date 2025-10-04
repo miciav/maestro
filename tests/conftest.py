@@ -481,9 +481,9 @@ def isolate_database():
         temp_db_path = temp_db.name
     
     # Mock the StatusManager to use our temp database
-    with patch('maestro.core.status_manager.StatusManager') as mock_sm_class:
+    with patch('maestro.server.internals.status_manager.StatusManager') as mock_sm_class:
         # Create a real StatusManager instance with the temp database
-        from maestro.core.status_manager import StatusManager
+        from maestro.server.internals.status_manager import StatusManager
         real_sm = StatusManager(temp_db_path)
         mock_sm_class.return_value = real_sm
         
