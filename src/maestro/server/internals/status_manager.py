@@ -355,13 +355,15 @@ class StatusManager:
                 }
             return None
 
-    def save_dag_definition(self, dag):
+    def save_dag_definition(self, dag, dag_filepath: Optional[str] = None):
         with self.Session.begin() as session:
             dag_orm = session.query(DagORM).filter_by(id=dag.dag_id).first()
             if not dag_orm:
                 dag_orm = DagORM(id=dag.dag_id)
                 session.add(dag_orm)
             dag_orm.definition = json.dumps(dag.to_dict())
+            if dag_filepath:
+                dag_orm.dag_filepath = dag_filepath
 
     def get_dag_definition(self, dag_id: str) -> Optional[Dict]:
         with self.Session() as session:

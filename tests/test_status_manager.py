@@ -2,6 +2,7 @@ import pytest
 import threading
 import uuid
 from maestro.server.internals.status_manager import StatusManager
+from maestro.server.internals.models import DagORM
 from datetime import datetime, timedelta
 
 @pytest.fixture
@@ -327,4 +328,23 @@ def test_get_dag_definition_returns_saved_definition(status_manager):
         stored_definition = sm.get_dag_definition(dag.dag_id)
 
     assert stored_definition == dag.to_dict()
+
+
+def test_save_dag_definition_persists_filepath(status_manager):
+    class DummyDag:
+        dag_id = "dummy_dag"
+
+        def to_dict(self):
+            return {"dag_id": self.dag_id, "tasks": {}}
+
+    dag_file_path = "/tmp/workflows/sample.yaml"
+
+    with status_manager as sm:
+        dag = DummyDag()
+        sm.save_dag_definition(dag, dag_file_path)
+
+        with sm.Session() as session:
+            stored_dag = session.query(DagORM).filter_by(id=dag.dag_id).first()
+            assert stored_dag is not None
+            assert stored_dag.dag_filepath == dag_file_path
 

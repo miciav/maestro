@@ -132,7 +132,7 @@ async def create_dag(request: DAGCreateRequest, orchestrator: Orchestrator = Dep
         execution_id = str(uuid.uuid4())
         
         with orchestrator.status_manager as sm:
-            sm.save_dag_definition(dag)
+            sm.save_dag_definition(dag, request.dag_file_path)
             # Create initial execution with 'created' status
             sm.create_dag_execution_with_status(dag_id, execution_id, "created")
             # Initialize all tasks with pending status
