@@ -349,7 +349,17 @@ class StatusManager:
     def get_dag_definition(self, dag_id: str) -> Optional[Dict]:
         with self.Session() as session:
             dag = session.query(DagORM).filter_by(id=dag_id).first()
-            return dag.dag_filepath if dag else None
+            if not dag:
+                return None
+
+            if dag.definition is None:
+                return None
+
+            try:
+                return json.loads(dag.definition)
+            except (TypeError, json.JSONDecodeError):
+                # If the stored definition is not valid JSON, fall back to returning the raw value
+                return dag.definition
 
     def delete_dag(self, dag_id: str) -> int:
         with self.Session.begin() as session:
