@@ -11,9 +11,18 @@ from pathlib import Path
 import pytest
 import tempfile
 import os
+import sys
 import sqlite3
 from unittest.mock import Mock, MagicMock, patch
 from datetime import datetime
+
+# Ensure the project package is importable when the tests are executed without
+# installing the package. This mimics an editable install by adding the "src"
+# directory to ``sys.path``.
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 
 def create_test_db():
