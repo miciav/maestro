@@ -88,7 +88,24 @@ class StatusManager:
 
     def get_task_status(self, dag_id: str, task_id: str, execution_id: str = None) -> Optional[str]:
         with self.Session() as session:
-            task = session.query(TaskORM).filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id).first()
+            task = session.query(TaskORM).filter_by(
+                dag_id=dag_id,
+                id=task_id,
+                execution_id=execution_id
+            ).first()
+
+            if not task and execution_id is not None:
+                # Fall back to the task status without execution scoping when
+                # a specific execution record is missing. This mirrors the
+                # behaviour of earlier, file-based implementations and keeps
+                # resume flows working when tasks were persisted before the
+                # execution record was created.
+                task = session.query(TaskORM).filter_by(
+                    dag_id=dag_id,
+                    id=task_id,
+                    execution_id=None
+                ).first()
+
             return task.status if task else None
 
     def get_dag_status(self, dag_id: str, execution_id: str = None) -> Dict[str, str]:
