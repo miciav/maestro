@@ -312,3 +312,19 @@ def test_task_status_with_timestamps(status_manager):
         assert task["completed_at"] is not None
         assert task["status"] == "completed"
 
+
+def test_get_dag_definition_returns_saved_definition(status_manager):
+    class DummyDag:
+        dag_id = "dummy_dag"
+
+        def to_dict(self):
+            return {"dag_id": self.dag_id, "tasks": {}}
+
+    with status_manager as sm:
+        dag = DummyDag()
+        sm.save_dag_definition(dag)
+
+        stored_definition = sm.get_dag_definition(dag.dag_id)
+
+    assert stored_definition == dag.to_dict()
+
