@@ -1,16 +1,15 @@
 {
-    // === EDITOR ===
     "editor.tabSize": 4,
     "editor.insertSpaces": true,
     "editor.formatOnSave": true,
-    "editor.rulers": [88], // buona lunghezza per PEP8
+    "editor.rulers": [
+        88
+    ], // buona lunghezza per PEP8
     "editor.codeActionsOnSave": {
-        "source.organizeImports": true
+        "source.organizeImports": "explicit"
     },
     "files.trimTrailingWhitespace": true,
     "files.insertFinalNewline": true,
-
-    // === PYTHON ===
     "python.analysis.typeCheckingMode": "basic",
     "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
     "python.formatting.provider": "black",
@@ -20,27 +19,19 @@
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
     "python.testing.autoTestDiscoverOnSaveEnabled": true,
-
-    // === GIT ===
     "git.enableSmartCommit": true,
     "git.confirmSync": false,
     "git.autofetch": true,
-
-    // === UI ===
     "workbench.colorTheme": "Dracula",
     "workbench.iconTheme": "material-icon-theme",
     "errorLens.enabled": true,
     "breadcrumbs.enabled": true,
-
-    // === FILES ===
     "files.exclude": {
         "**/__pycache__": true,
         "**/*.pyc": true,
         ".venv": true,
         "venv": true
     },
-
-    // === TERMINAL ===
     "terminal.integrated.env.linux": {
         "PYTHONPATH": "${workspaceFolder}"
     },
