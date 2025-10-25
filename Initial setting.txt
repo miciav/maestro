@@ -1,3 +1,4 @@
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 
-.venv\Scripts\activate
+.venv/Scripts/activate # Windows
+source .venv/bin/activate # Ubuntu
