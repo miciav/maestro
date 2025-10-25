@@ -1,0 +1,28 @@
+dag:
+  name: "mixed_execution"
+  tasks:
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting mixed DAG..."
+      dependencies: []
+    - task_id: "generate_data"
+      type: "PythonTask"
+      params:
+        script: |
+          import json
+          data = {"values": [1, 2, 3, 4, 5]}
+          with open("data.json", "w") as f:
+              json.dump(data, f)
+          print("Generated data.json")
+      dependencies: ["init"]
+    - task_id: "count_values"
+      type: "BashTask"
+      params:
+        command: "cat data.json | grep -o '[0-9]' | wc -l"
+      dependencies: ["generate_data"]
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Mixed execution complete."
+      dependencies: ["count_values"]

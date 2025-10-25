@@ -1,0 +1,9 @@
+dag:
+  name: "scheduled_greeting"
+  start_time: "2025-10-23T09:00:00"
+  tasks:
+    - task_id: "greet"
+      type: "PrintTask"
+      params:
+        message: "Good morning! This task started at 09:00!"
+      dependencies: []

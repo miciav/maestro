@@ -1,0 +1,18 @@
+dag:
+  name: "basic_linear"
+  tasks:
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Starting DAG"
+      dependencies: []
+    - task_id: "process"
+      type: "PythonTask"
+      params:
+        script: "print('Processing data...')"
+      dependencies: ["start"]
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "DAG completed!"
+      dependencies: ["process"]

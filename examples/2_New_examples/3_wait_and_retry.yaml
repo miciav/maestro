@@ -1,0 +1,19 @@
+dag:
+  name: "wait_and_retry"
+  tasks:
+    - task_id: "unstable_task"
+      type: "PythonTask"
+      params:
+        script: |
+          import random, sys
+          if random.random() < 0.5:
+              sys.exit(1)
+          print("Success on this run!")
+      retries: 3
+      retry_delay: 2
+      dependencies: []
+    - task_id: "final_message"
+      type: "PrintTask"
+      params:
+        message: "Pipeline finished after retry logic"
+      dependencies: ["unstable_task"]
