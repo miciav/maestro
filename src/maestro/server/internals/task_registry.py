@@ -18,6 +18,8 @@ class TaskRegistry:
         from maestro.server.tasks.terraform_task import TerraformTask
         from maestro.server.tasks.ansible_task import AnsibleTask
         from maestro.server.tasks.extended_terraform_task import ExtendedTerraformTask
+        from maestro.server.tasks.python_task import PythonTask
+
 
         self.register("PrintTask", PrintTask)
         self.register("FileWriterTask", FileWriterTask)
@@ -25,6 +27,7 @@ class TaskRegistry:
         self.register("TerraformTask", TerraformTask)
         self.register("AnsibleTask", AnsibleTask)
         self.register("ExtendedTerraformTask", ExtendedTerraformTask)
+        self.register("PythonTask", PythonTask)
 
     def register(self, name: str, task_class: typing.Type[BaseTask]):
         """Register a task type."""
