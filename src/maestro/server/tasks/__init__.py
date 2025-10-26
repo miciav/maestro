@@ -4,5 +4,6 @@ from .wait_task import WaitTask
 from .ansible_task import AnsibleTask
 from .file_writer_task import FileWriterTask
 from .terraform_task import TerraformTask
+from .python_task import PythonTask
 
-__all__ = ["BaseTask", "PrintTask", "WaitTask", "AnsibleTask", "FileWriterTask", "TerraformTask"]
+__all__ = ["BaseTask", "PrintTask", "WaitTask", "AnsibleTask", "FileWriterTask", "TerraformTask", "PythonTask"]
