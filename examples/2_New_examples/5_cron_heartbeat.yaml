@@ -1,0 +1,9 @@
+dag:
+  name: "cron_heartbeat"
+  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+  tasks:
+    - task_id: "heartbeat"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat: Maestro is alive!"
+      dependencies: []
