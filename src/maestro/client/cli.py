@@ -13,6 +13,7 @@ from datetime import datetime
 import subprocess
 import time
 import threading
+import json
 
 from .api_client import MaestroAPIClient
 
@@ -458,15 +459,35 @@ def start_server(
         with open(pid_file, "w") as f:
             f.write(str(process.pid))
 
+        status_data = {
+            "pid": process.pid,
+            "host": host,
+            "port": port
+        }
+        with open(pid_file, "w") as f:
+            json.dump(status_data, f)
+
         # Wait for server to start
         api_client.base_url = f"http://{host}:{port}"
         if api_client.wait_for_server(30):
             console.print(f"[green]Maestro server started on {host}:{port}[/green]")
+
+            try:
+                with open(pid_file, "r") as f:
+                    data = json.load(f)
+                pid = data["pid"]
+                host = data.get("host", "unknown")
+                port = data.get("port", "unknown")
+
+                console.print(f"[blue]PID file created at {pid_file} with number: {pid}[/blue]")
+
+            except Exception as e:
+                console.print(f"[red]Error reading PID file: {e}[/red]")
+                raise typer.Exit(1)
+
         else:
             console.print("[red]Failed to start server[/red]")
             raise typer.Exit(1)
-        # console.print(f"[green]Maestro server started on {host}:{port}[/green]")
-        console.print(f"[blue]PID file created at {pid_file}[/blue]")
 
     else:
         # Run server in foreground
@@ -478,9 +499,6 @@ def start_server(
 @server.command("stop")
 def stop_server():
     """Stop the Maestro API server"""
-    import signal
-    import sys
-
     pid_file = os.path.expanduser("~/.maestro/server.pid")
 
     if not os.path.exists(pid_file):
@@ -489,15 +507,17 @@ def stop_server():
 
     try:
         with open(pid_file, "r") as f:
-            pid = int(f.read().strip())
+            data = json.load(f)
+        pid = data["pid"]
+        host = data.get("host", "unknown")
+        port = data.get("port", "unknown")
     except Exception as e:
         console.print(f"[red]Error reading PID file: {e}[/red]")
         raise typer.Exit(1)
 
     try:
         os.kill(pid, signal.SIGTERM)
-        console.print(f"[green]Stopping Maestro server (PID {pid})...[/green]")
-
+        console.print(f"[green]Stopping Maestro server (PID {pid}), currently running on {host}:{port}...[/green]")
     except ProcessLookupError:
         console.print("[yellow]Process not found. Removing stale PID file.[/yellow]")
     except PermissionError:
