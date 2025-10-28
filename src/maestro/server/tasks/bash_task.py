@@ -18,6 +18,7 @@ class BashTask(BaseTask):
             result = subprocess.run(
                 self.command,
                 shell=True,
+                executable="/bin/bash",
                 capture_output=True,
                 text=True
             )

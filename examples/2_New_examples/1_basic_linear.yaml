@@ -9,7 +9,8 @@ dag:
     - task_id: "process"
       type: "PythonTask"
       params:
-        script: "print('Processing data...')"
+        code: |
+          print("Processing data...")
       dependencies: ["start"]
     - task_id: "finish"
       type: "PrintTask"

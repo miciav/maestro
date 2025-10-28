@@ -9,7 +9,7 @@ dag:
     - task_id: "generate_data"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json
           data = {"values": [1, 2, 3, 4, 5]}
           with open("data.json", "w") as f:

@@ -4,7 +4,7 @@ dag:
     - task_id: "check_condition"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random
           result = "branch_a" if random.random() > 0.5 else "branch_b"
           print(f"Next step: {result}")

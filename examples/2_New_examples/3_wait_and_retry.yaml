@@ -4,7 +4,7 @@ dag:
     - task_id: "unstable_task"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
           if random.random() < 0.5:
               sys.exit(1)
