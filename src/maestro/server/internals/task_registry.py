@@ -1,3 +1,5 @@
+# /home/dave-crd/Scrivania/Maestro/src/maestro/server/internals/
+
 import typing
 
 from maestro.server.tasks import BaseTask
@@ -19,6 +21,7 @@ class TaskRegistry:
         from maestro.server.tasks.ansible_task import AnsibleTask
         from maestro.server.tasks.extended_terraform_task import ExtendedTerraformTask
         from maestro.server.tasks.python_task import PythonTask
+        from maestro.server.tasks.bash_task import BashTask
 
 
         self.register("PrintTask", PrintTask)
@@ -28,6 +31,7 @@ class TaskRegistry:
         self.register("AnsibleTask", AnsibleTask)
         self.register("ExtendedTerraformTask", ExtendedTerraformTask)
         self.register("PythonTask", PythonTask)
+        self.register("BashTask", BashTask)
 
     def register(self, name: str, task_class: typing.Type[BaseTask]):
         """Register a task type."""
