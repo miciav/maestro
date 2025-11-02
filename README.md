@@ -33,7 +33,7 @@
 - **Efficient filtering:** Client-side log deduplication and filtering
 - **Graceful reconnection:** Automatic retry logic for network issues
 
-## Installation
+## Installation and use of UV
 
 ```bash
 # Clone the repository
@@ -45,6 +45,20 @@ uv sync --extra test
 
 # Install the project in editable mode for local development
 uv pip install -e .
+
+# ...
+
+# NOTE: Since uv provides and manages all dependencies required by the software, it’s recommended to use uv run when executing commands such as tests or CLI operations.
+# This ensures that all dependencies are correctly resolved within the managed environment.
+
+# Example:
+uv run maestro server start
+uv run pytest
+
+# Alternatively, you can start an interactive environment once and run commands normally (if "uv shell" is implemented):
+uv shell
+maestro server start
+pytest
 ```
 
 ## Usage
