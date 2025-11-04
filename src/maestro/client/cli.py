@@ -13,6 +13,7 @@ from datetime import datetime
 import subprocess
 import time
 import threading
+import json
 
 from .api_client import MaestroAPIClient
 
@@ -450,28 +451,84 @@ def start_server(
             "--port", str(port),
             "--log-level", log_level
         ]
-        
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
+
+        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        pid_file = os.path.expanduser("~/.maestro/server.pid")
+        os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+        with open(pid_file, "w") as f:
+            f.write(str(process.pid))
+
+        status_data = {
+            "pid": process.pid,
+            "host": host,
+            "port": port
+        }
+        with open(pid_file, "w") as f:
+            json.dump(status_data, f)
+
         # Wait for server to start
         api_client.base_url = f"http://{host}:{port}"
         if api_client.wait_for_server(30):
             console.print(f"[green]Maestro server started on {host}:{port}[/green]")
+
+            try:
+                with open(pid_file, "r") as f:
+                    data = json.load(f)
+                pid = data["pid"]
+                host = data.get("host", "unknown")
+                port = data.get("port", "unknown")
+
+                console.print(f"[blue]PID file created at {pid_file} with number: {pid}[/blue]")
+
+            except Exception as e:
+                console.print(f"[red]Error reading PID file: {e}[/red]")
+                raise typer.Exit(1)
+
         else:
             console.print("[red]Failed to start server[/red]")
             raise typer.Exit(1)
+
     else:
         # Run server in foreground
         from maestro.server.app import start_server
         console.print(f"[green]Starting Maestro server on {host}:{port}[/green]")
         start_server(host, port, log_level)
 
+
 @server.command("stop")
 def stop_server():
     """Stop the Maestro API server"""
-    # This would need to be implemented with proper process management
-    console.print("[yellow]Server stop command not implemented yet[/yellow]")
-    console.print("[yellow]Please stop the server manually (Ctrl+C)[/yellow]")
+    pid_file = os.path.expanduser("~/.maestro/server.pid")
+
+    if not os.path.exists(pid_file):
+        console.print("[red]No PID file found. Is the server running as a daemon?[/red]")
+        raise typer.Exit(1)
+
+    try:
+        with open(pid_file, "r") as f:
+            data = json.load(f)
+        pid = data["pid"]
+        host = data.get("host", "unknown")
+        port = data.get("port", "unknown")
+    except Exception as e:
+        console.print(f"[red]Error reading PID file: {e}[/red]")
+        raise typer.Exit(1)
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+        console.print(f"[green]Stopping Maestro server (PID {pid}), currently running on {host}:{port}...[/green]")
+    except ProcessLookupError:
+        console.print("[yellow]Process not found. Removing stale PID file.[/yellow]")
+    except PermissionError:
+        console.print("[red]Permission denied to stop server process.[/red]")
+        raise typer.Exit(1)
+    finally:
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
+
+    console.print("[green]Server stopped successfully.[/green]")
+
 
 @server.command("status")
 def server_status(
