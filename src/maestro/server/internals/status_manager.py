@@ -50,11 +50,17 @@ DOCKER_NOUNS = [
 
 class StatusManager:
 
+    # 🆕 Variabile di classe per conservare l'istanza corrente
+    _instance = None
+
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.engine = self._get_engine()
         self.Session = self._get_session_factory()
         self._initialize_tables_once()
+
+        # 🆕 Memorizza l'istanza globale
+        StatusManager._instance = self
 
     def _get_engine(self):
         return create_engine(f'sqlite:///{self.db_path}')
@@ -306,6 +312,16 @@ class StatusManager:
             log = LogORM(dag_id=dag_id, execution_id=execution_id, task_id=task_id, level=level, message=message, thread_id=str(threading.current_thread().ident))
             session.add(log)
 
+    # 🆕 Metodo helper per aggiungere log in modo più comodo
+    def add_log(self, dag_id: str, execution_id: str, task_id: str, message: str, level: str = "INFO"):
+        self.log_message(
+            dag_id=dag_id,
+            execution_id=execution_id,
+            task_id=task_id,
+            level=level,
+            message=message
+        )
+
     def get_execution_logs(self, dag_id: str, execution_id: str = None, limit: int = 100) -> List[Dict[str, Any]]:
         with self.Session() as session:
             query = session.query(LogORM).filter_by(dag_id=dag_id)
@@ -387,3 +403,11 @@ class StatusManager:
                 session.delete(dag)
                 return 1
             return 0
+
+
+    # 🆕 Metodo per recuperare l'istanza globale
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            raise RuntimeError("StatusManager has not been initialized yet.")
+        return cls._instance
