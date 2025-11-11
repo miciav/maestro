@@ -18,6 +18,7 @@ from maestro.server.internals.executors.factory import ExecutorFactory
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
+
 class DatabaseLogHandler(logging.Handler):
     """Custom logging handler that writes to StatusManager database."""
 
@@ -54,51 +55,69 @@ class DatabaseLogHandler(logging.Handler):
 
 
 class Orchestrator:
-    def __init__(self, log_level: str = "INFO", status_manager: Optional[StatusManager] = None, db_path: Optional[str] = "maestro.db"):
+
+    def __init__(
+        self,
+        log_level: str = "INFO",
+        status_manager: Optional[StatusManager] = None,
+        db_path: Optional[str] = "maestro.db"
+    ):
         self.task_registry = TaskRegistry()
         self.dag_loader = DAGLoader(self.task_registry)
         self.console = get_console()
+
         if status_manager:
             self.status_manager = status_manager
         elif db_path:
             self.status_manager = StatusManager(db_path)
         else:
             self.status_manager = StatusManager()
+
         self.executor_factory = ExecutorFactory()
+
+        # ⬇️ qui configuriamo i logger (vedi sotto)
         self._setup_logging(log_level)
 
         self.executor = ThreadPoolExecutor(max_workers=10)
         self._execution_stop_events: Dict[str, threading.Event] = {}
         self.task_executor = ThreadPoolExecutor(max_workers=10)
 
-
     def _setup_logging(self, log_level: str):
-        """Setup logging with Rich handler."""
-        logging.basicConfig(
-            level=getattr(logging, log_level.upper()),
-            format="%(name)s - %(message)s",
-            handlers=[RichHandler(console=self.console, rich_tracebacks=True)]
-        )
-        # Clear existing handlers from the root logger to prevent duplicate logs
-        for handler in logging.root.handlers[:]:
-            logging.root.removeHandler(handler)
+        """Setup global logging with RichHandler (console) and DatabaseLogHandler (persistent)."""
 
-        # Add RichHandler for console output
+        # Pulisci logging root
+        logging.shutdown()
+        for h in logging.root.handlers[:]:
+            logging.root.removeHandler(h)
+
+        level = getattr(logging, log_level.upper(), logging.INFO)
+        logging.root.setLevel(level)
+
+        # Console
         rich_handler = RichHandler(console=self.console, rich_tracebacks=True)
-        rich_handler.setLevel(getattr(logging, log_level.upper()))
-        logging.root.addHandler(rich_handler)
+        rich_handler.setLevel(level)
 
-        # Add DatabaseLogHandler for persistence
+        # DB
         self.db_handler = DatabaseLogHandler(self.status_manager)
-        self.db_handler.setLevel(logging.DEBUG) # Capture all levels for database
-        logging.root.addHandler(self.db_handler)
+        self.db_handler.setLevel(logging.DEBUG)
 
-        # Set the root logger level
-        logging.root.setLevel(getattr(logging, log_level.upper()))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(rich_handler)
+        root_logger.addHandler(self.db_handler)
+        logging.captureWarnings(True)
+        root_logger.propagate = True
 
-        self.logger = logging.getLogger(__name__)
+        # Logger dell’orchestratore
+        self.logger = logging.getLogger("maestro.orchestrator")
+        self.logger.setLevel(level)
+        self.logger.propagate = True
 
-    
+        # 🔧 AGGANCIA il DB handler anche a tutti i logger di maestro già creati
+        for name in list(logging.root.manager.loggerDict.keys()):
+            if name.startswith("maestro."):
+                lg = logging.getLogger(name)
+                lg.addHandler(self.db_handler)
+                lg.propagate = True
 
     def register_task_type(self, name: str, task_class: Type[BaseTask]):
         """Register a custom task type."""
@@ -254,23 +273,26 @@ class Orchestrator:
 
         # Set up database logging if execution_id is provided
         db_handler = None
+
         if execution_id:
             db_handler = DatabaseLogHandler(self.status_manager)
             db_handler.set_context(dag_id, execution_id)
 
-            # Add the database handler to all task-related loggers
             task_loggers = [
                 'maestro.server.tasks.terraform_task',
                 'maestro.server.tasks.extended_terraform_task',
                 'maestro.server.tasks.print_task',
+                'maestro.server.tasks.python_task',
+                'maestro.server.tasks.bash_task',   # ✅ eccolo
                 'maestro.core.executors.ssh',
                 'maestro.core.executors.docker',
-                'maestro.core.executors.local'
+                'maestro.core.executors.local',
             ]
 
             for logger_name in task_loggers:
                 logger = logging.getLogger(logger_name)
                 logger.addHandler(db_handler)
+                logger.propagate = True
 
         try:
             # Use concurrent execution
