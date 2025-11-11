@@ -10,7 +10,9 @@ from maestro.server.internals.status_manager import StatusManager
 
 class PythonTask(BaseTask):
     """
-    Executes a Python snippet or script, and logs any printed output.
+    Executes inline Python code or a .py script.
+    Captures stdout/stderr (print statements) and writes them into logs table
+    with proper dag_id, execution_id, and formatted message.
     """
 
     code: Optional[str] = Field(default=None, description="Inline Python code to execute")
@@ -30,12 +32,17 @@ class PythonTask(BaseTask):
                 raise ValueError("PythonTask requires either 'code' or 'script_path'.")
 
         output = buffer.getvalue().strip()
+
         if output:
             sm = StatusManager.get_instance()
+
+            # 🆕 aggiungiamo prefisso e usiamo i campi reali
+            message = f"[{self.__class__.__name__}] {output}"
+
             sm.add_log(
-                dag_id=getattr(self, "dag_id", None),
-                execution_id=getattr(self, "execution_id", None),
+                dag_id=self.dag_id,
+                execution_id=self.execution_id,
                 task_id=self.task_id,
-                message=output,
+                message=message,
                 level="INFO"
             )

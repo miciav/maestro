@@ -453,6 +453,10 @@ class Orchestrator:
             if db_handler:
                 db_handler.set_context(dag_id, execution_id, task_id)
             
+            # 🆕 Passa il contesto alla task (serve per i log)
+            task.dag_id = dag_id
+            task.execution_id = execution_id
+
             # Execute the task
             self.logger.info(f"Executing task: {task_id}")
             executor_instance = self.executor_factory.get_executor(task.executor)
