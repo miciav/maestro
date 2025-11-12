@@ -158,7 +158,14 @@ class StatusManager:
         with self.Session.begin() as session:
             execution = session.query(ExecutionORM).filter_by(dag_id=dag_id, id=execution_id).first()
             if execution:
+                # Se la DAG passa da "created" a "running" e non ha started_at, impostalo ora
+                if status == "running" and execution.started_at is None:
+                    execution.started_at = datetime.now()
+                    execution.thread_id = str(threading.current_thread().ident)
+                    execution.pid = threading.current_thread().ident
+
                 execution.status = status
+
                 if status in ["completed", "failed", "cancelled"]:
                     execution.completed_at = datetime.now()
 
