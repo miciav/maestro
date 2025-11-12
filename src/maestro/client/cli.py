@@ -189,6 +189,7 @@ def status(
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
 
+
 @app.command()
 def log(
     dag_id: str = typer.Argument(..., help="DAG ID to get logs for"),
@@ -201,20 +202,42 @@ def log(
     """Show logs for a DAG execution"""
     api_client.base_url = server_url
     check_server_connection()
-    
+
     try:
+
         response = api_client.get_dag_logs_v1(dag_id, execution_id, limit, task_filter, level_filter)
-        
+
+        # 🔧 FIX 1: se la risposta è una stringa JSON, decodificala
+        if isinstance(response, str):
+            import json
+            try:
+                response = json.loads(response)
+            except Exception:
+                console.print("[red]Error: invalid JSON returned from server[/red]")
+                raise typer.Exit(1)
+
+        # Se la risposta è un dizionario con chiave "logs", estrai la lista
+        if isinstance(response, dict) and "logs" in response:
+            response = response["logs"]
+
+        # 🔧 FIX 2: se è una lista di stringhe JSON, deserializzale
+        if isinstance(response, list) and all(isinstance(e, str) for e in response):
+            try:
+                response = [json.loads(e) for e in response]
+            except Exception:
+                console.print("[red]Error: invalid JSON structure in log entries[/red]")
+                raise typer.Exit(1)
+
         if not response:
             console.print(f"[yellow]No logs found for DAG: {dag_id}[/yellow]")
             return
-        
+
         console.print(f"[bold cyan]Logs: {dag_id}[/bold cyan]")
         if execution_id:
             console.print(f"[dim]Execution ID: {execution_id}[/dim]")
         console.print(f"[dim]Showing {len(response)} log entries[/dim]")
         console.print()
-        
+
         for log_entry in reversed(response):
             level_style = {
                 "ERROR": "red",
@@ -222,17 +245,18 @@ def log(
                 "INFO": "green",
                 "DEBUG": "blue"
             }.get(log_entry["level"], "white")
-            
+
             timestamp = log_entry["timestamp"].split("T")[1].split(".")[0] if "T" in log_entry["timestamp"] else log_entry["timestamp"]
-            
+
             console.print(f"[dim]{timestamp}[/dim] [{level_style}]{log_entry['level']}[/{level_style}] [magenta]{log_entry['task_id']}[/magenta]: {log_entry['message']}")
-        
+
         console.print()
         console.print(f"[dim]💡 Tip: Use 'maestro attach {dag_id}' for live log streaming[/dim]")
-        
+
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
+
 
 @app.command()
 def attach(

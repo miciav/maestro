@@ -47,7 +47,9 @@ def get_orchestrator():
 
 # --- Endpoints ---
 
-@router.get("/{dag_id}", response_model=LogsResponse)
+# @router.get("/{dag_id}", response_model=LogsResponse)
+
+@router.get("/{dag_id}")
 async def get_dag_logs(
     dag_id: str, 
     execution_id: Optional[str] = None,
@@ -77,12 +79,15 @@ async def get_dag_logs(
                 ) for log in logs
             ]
             
-            return LogsResponse(
-                dag_id=dag_id,
-                execution_id=execution_id,
-                logs=log_entries,
-                total_count=len(log_entries)
-            )
+            #return LogsResponse(
+                #dag_id=dag_id,
+                #execution_id=execution_id,
+                #logs=log_entries,
+                #total_count=len(log_entries)
+            #)
+
+            return log_entries
+
     except Exception as e:
         logger.error(f"Failed to get DAG logs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
