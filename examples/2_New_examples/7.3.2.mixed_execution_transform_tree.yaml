@@ -1,0 +1,139 @@
+abstract: |
+  This DAG represents a difficult-level mixed execution workflow arranged
+  as a *transformation tree*. After an initial dataset is generated, the
+  pipeline fans out into three separate transformation branches. Each branch
+  performs a unique sequence of Python and Bash tasks, including numeric
+  transformations, string processing, and data restructuring.
+
+  After completing their internal steps, the branches converge into a
+  second-tier merge node, which triggers a final summary PrintTask.
+
+  This DAG is designed to stress:
+    - Mixed Python/Bash fan-out patterns
+    - Tree-like dependency structures
+    - Multi-file intermediate data handling
+    - Parallelism in complex data transformation pipelines
+
+dag:
+  name: "mixed_execution_transform_tree"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) INITIALIZATION
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting transform-tree mixed execution pipeline..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) PYTHON: GENERATE DATASET
+    # ---------------------------------------------------------
+    - task_id: "generate_dataset"
+      type: "PythonTask"
+      params:
+        script: |
+          import json, random
+          data = {"values": [random.randint(1, 100) for _ in range(20)]}
+          with open("transform_data.json", "w") as f:
+            json.dump(data, f)
+          print("Generated transform_data.json with:", data["values"])
+      dependencies: ["init"]
+
+    # =========================================================
+    # PRIMARY FAN-OUT — 3 TRANSFORMATION BRANCHES
+    # =========================================================
+
+    # ---------------------- BRANCH A -------------------------
+    # Processes values through scaling & Bash formatting
+    - task_id: "A1_scale_values"
+      type: "PythonTask"
+      params:
+        script: |
+          import json
+          with open("transform_data.json") as f:
+            data = json.load(f)
+          scaled = [v * 2 for v in data["values"]]
+          with open("scaled.txt", "w") as out:
+            out.write("\\n".join(map(str, scaled)))
+          print("Branch A scaled values:", scaled)
+      dependencies: ["generate_dataset"]
+
+    - task_id: "A2_show_head"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch A head:'; head -n 5 scaled.txt"
+      dependencies: ["A1_scale_values"]
+
+
+    # ---------------------- BRANCH B -------------------------
+    # Converts numbers into labeled strings, then filters with Bash
+    - task_id: "B1_label_values"
+      type: "PythonTask"
+      params:
+        script: |
+          import json
+          with open("transform_data.json") as f:
+            data = json.load(f)
+          with open("labeled.txt", "w") as out:
+            for v in data["values"]:
+              out.write(f\"Value_{v}\\n\")
+          print("Branch B labeled values written to labeled.txt")
+      dependencies: ["generate_dataset"]
+
+    - task_id: "B2_filter_labels"
+      type: "BashTask"
+      params:
+        command: "grep 'Value_[5-9][0-9]' labeled.txt > filtered_labels.txt || true"
+      dependencies: ["B1_label_values"]
+
+
+    # ---------------------- BRANCH C -------------------------
+    # Computes statistics, then restructures data
+    - task_id: "C1_compute_stats"
+      type: "PythonTask"
+      params:
+        script: |
+          import json
+          with open("transform_data.json") as f:
+            data = json.load(f)
+          vals = data["values"]
+          stats = {
+            "min": min(vals),
+            "max": max(vals),
+            "avg": sum(vals)/len(vals)
+          }
+          with open("stats.json", "w") as f:
+            json.dump(stats, f)
+          print("Branch C stats:", stats)
+      dependencies: ["generate_dataset"]
+
+    - task_id: "C2_format_stats"
+      type: "BashTask"
+      params:
+        command: "cat stats.json | tr -d '{}\"' | tr ',' '\\n' > stats_formatted.txt"
+      dependencies: ["C1_compute_stats"]
+
+    # =========================================================
+    # SECONDARY FAN-IN — combine outputs of A, B, C
+    # =========================================================
+
+    - task_id: "combine_results"
+      type: "PrintTask"
+      params:
+        message: "All transformation branches completed. Consolidating results..."
+      dependencies:
+        - "A2_show_head"
+        - "B2_filter_labels"
+        - "C2_format_stats"
+
+    # ---------------------------------------------------------
+    # FINAL SUMMARY
+    # ---------------------------------------------------------
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Transform-tree mixed execution pipeline completed successfully!"
+      dependencies: ["combine_results"]

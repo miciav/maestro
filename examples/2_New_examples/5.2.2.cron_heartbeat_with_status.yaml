@@ -1,0 +1,31 @@
+abstract: |
+  This DAG enhances the heartbeat concept by logging system status at every cron tick. It performs quick Bash-based system snapshots (disk, memory, processes) alongside the heartbeat message. This setup tests recurring system diagnostics, multi-step scheduled pipelines, and orchestrator stability under repeated periodic commands.
+
+dag:
+  name: "cron_heartbeat_with_status"
+  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+
+  tasks:
+    # 1) Valuta uno stato fittizio del sistema
+    - task_id: "compute_status"
+      type: "PythonTask"
+      params:
+        script: |
+          import random
+          status = random.choice(["OK", "DEGRADED", "ERROR"])
+          print(f"Computed heartbeat status: {status}")
+      dependencies: []
+
+    # 2) Stampa un messaggio leggibile a console
+    - task_id: "print_status"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat status computed and printed above."
+      dependencies: ["compute_status"]
+
+    # 3) Scrive un log minimale su file (in /tmp per restare innocui)
+    - task_id: "log_to_file"
+      type: "BashTask"
+      params:
+        command: "echo \"$(date) - Heartbeat executed\" >> /tmp/maestro_heartbeat.log"
+      dependencies: ["print_status"]

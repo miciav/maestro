@@ -1,0 +1,37 @@
+abstract: |
+  This DAG mixes BashTask and PythonTask retry logic in a linear pipeline. The first step is an unstable Bash command that may fail randomly and retry several times; the second step is an unstable PythonTask with its own independent retry policy. This structure tests mixed executor retry handling, error propagation, and consistent log reporting during cross-executor failure scenarios.
+
+dag:
+  name: "wait_and_retry_bash_python_mix"
+  tasks:
+
+    - task_id: "unstable_bash"
+      type: "BashTask"
+      params:
+        command: |
+          if [ $((RANDOM % 3)) -eq 0 ]; then
+            echo "Failing Bash task"; exit 1;
+          else
+            echo "Bash succeeded!";
+          fi
+      retries: 4
+      retry_delay: 1
+      dependencies: []
+
+    - task_id: "unstable_python"
+      type: "PythonTask"
+      params:
+        script: |
+          import random, sys
+          if random.random() < 0.4:
+              sys.exit("Python failed")
+          print("Python succeeded")
+      retries: 2
+      retry_delay: 2
+      dependencies: ["unstable_bash"]
+
+    - task_id: "done"
+      type: "PrintTask"
+      params:
+        message: "Mixed retry pipeline finished."
+      dependencies: ["unstable_python"]

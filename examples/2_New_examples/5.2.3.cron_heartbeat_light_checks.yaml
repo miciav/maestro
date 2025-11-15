@@ -1,0 +1,43 @@
+abstract: |
+  This DAG performs a lightweight system check on each cron heartbeat. It mixes PrintTask, BashTask, and PythonTask to gather minimal environment data without heavy overhead. It is designed to verify low-impact recurring tasks and ensure the orchestrator remains responsive and stable during frequent scheduled triggers.
+
+dag:
+  name: "cron_heartbeat_light_checks"
+  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+
+  tasks:
+    # ROOT: lancia il giro di check
+    - task_id: "heartbeat_root"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat: starting light system checks..."
+      dependencies: []
+
+    # Check pseudo-CPU (simulato)
+    - task_id: "check_cpu"
+      type: "PythonTask"
+      params:
+        script: |
+          print("CPU check: (simulated) OK")
+      dependencies: ["heartbeat_root"]
+
+    # Check disco (solo output informativo)
+    - task_id: "check_disk"
+      type: "BashTask"
+      params:
+        command: "df -h | head -n 5"
+      dependencies: ["heartbeat_root"]
+
+    # Check processi (solo prime righe)
+    - task_id: "check_processes"
+      type: "BashTask"
+      params:
+        command: "ps aux | head -n 5"
+      dependencies: ["heartbeat_root"]
+
+    # Merge: eseguito solo quando tutti i check sono completati
+    - task_id: "heartbeat_summary"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat: all light checks completed."
+      dependencies: ["check_cpu", "check_disk", "check_processes"]

@@ -1,0 +1,73 @@
+
+abstract: |
+  A long sequential pipeline of 12 tasks mixing Print, Bash, and Python. This
+  stresses long‑chain execution, logging, and scheduling.
+
+dag:
+  name: "bash_chain_long_pipeline"
+  tasks:
+    - task_id: "t1"
+      type: "PrintTask"
+      params: { message: "Start long pipeline" }
+      dependencies: []
+
+    - task_id: "t2"
+      type: "BashTask"
+      params: { command: "ls -l" }
+      dependencies: ["t1"]
+
+    - task_id: "t3"
+      type: "PythonTask"
+      params:
+        script: |
+          print("Step 3 complete")
+      dependencies: ["t2"]
+
+    - task_id: "t4"
+      type: "BashTask"
+      params: { command: "sleep 1 && echo 'Pause done'" }
+      dependencies: ["t3"]
+
+    - task_id: "t5"
+      type: "PrintTask"
+      params: { message: "Halfway there..." }
+      dependencies: ["t4"]
+
+    - task_id: "t6"
+      type: "BashTask"
+      params: { command: "echo 'Running step 6'" }
+      dependencies: ["t5"]
+
+    - task_id: "t7"
+      type: "PythonTask"
+      params:
+        script: |
+          print("Step 7: Python OK")
+      dependencies: ["t6"]
+
+    - task_id: "t8"
+      type: "BashTask"
+      params: { command: "echo 'Step 8'" }
+      dependencies: ["t7"]
+
+    - task_id: "t9"
+      type: "BashTask"
+      params: { command: "sleep 1" }
+      dependencies: ["t8"]
+
+    - task_id: "t10"
+      type: "PythonTask"
+      params:
+        script: |
+          print("Almost done...")
+      dependencies: ["t9"]
+
+    - task_id: "t11"
+      type: "PrintTask"
+      params: { message: "Final task running..." }
+      dependencies: ["t10"]
+
+    - task_id: "t12"
+      type: "PrintTask"
+      params: { message: "Pipeline complete!" }
+      dependencies: ["t11"]

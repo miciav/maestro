@@ -1,0 +1,47 @@
+# -------------------------------------------------------------------------------------
+# Parallel then Join
+# -------------------------------------------------------------------------------------
+# This DAG involves three parallel tasks of different durations, all dependent on a single entry point. Once completed, they converge into a single final merge task. The maximum duration of the slowest branch (approximately 40 seconds) defines the total execution time. It is particularly suitable for testing streaming visualization of parallel tasks and synchronization during the join phase.
+# -------------------------------------------------------------------------------------
+
+dag:
+  name: "intermediate_parallel_then_join"
+  tasks:
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Starting parallel DAG"
+      dependencies: []
+
+    - task_id: "worker_a"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Worker A...")
+          time.sleep(30)
+      dependencies: ["start"]
+
+    - task_id: "worker_b"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Worker B...")
+          time.sleep(40)
+      dependencies: ["start"]
+
+    - task_id: "worker_c"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Worker C...")
+          time.sleep(30)
+      dependencies: ["start"]
+
+    - task_id: "merge"
+      type: "PrintTask"
+      params:
+        message: "Workers completed!"
+      dependencies: ["worker_a", "worker_b", "worker_c"]

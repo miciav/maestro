@@ -1,0 +1,62 @@
+abstract: |
+  This DAG is a heavy parallel retry stress test. After an initial PrintTask, four unstable tasks (a mix of Bash and Python) run in parallel, each with its own retry count and delay. This structure pushes the orchestrator’s scheduler to handle simultaneous failures, retries, and logging from multiple executors at once. It validates robustness under parallel retry load.
+
+dag:
+  name: "wait_and_retry_heavy_parallel"
+  tasks:
+
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Starting heavy parallel retry pipeline..."
+      dependencies: []
+
+    # Quattro task instabili in parallelo
+    - task_id: "unstable_1"
+      type: "PythonTask"
+      params:
+        script: |
+          import random, sys
+          if random.random() < .5: sys.exit(1)
+          print("Unstable 1 OK")
+      retries: 4
+      retry_delay: 1
+      dependencies: ["start"]
+
+    - task_id: "unstable_2"
+      type: "BashTask"
+      params:
+        command: |
+          if [ $((RANDOM % 2)) -eq 0 ]; then exit 1; fi
+          echo "Unstable 2 OK"
+      retries: 3
+      retry_delay: 2
+      dependencies: ["start"]
+
+    - task_id: "unstable_3"
+      type: "PythonTask"
+      params:
+        script: |
+          import random, sys
+          if random.random() < .7: sys.exit(1)
+          print("Unstable 3 OK")
+      retries: 5
+      retry_delay: 1
+      dependencies: ["start"]
+
+    - task_id: "unstable_4"
+      type: "BashTask"
+      params:
+        command: |
+          if [ $((RANDOM % 3)) -eq 0 ]; then exit 1; fi
+          echo "Unstable 4 OK"
+      retries: 2
+      retry_delay: 3
+      dependencies: ["start"]
+
+    # Merging finale
+    - task_id: "end"
+      type: "PrintTask"
+      params:
+        message: "All unstable tasks have been processed."
+      dependencies: ["unstable_1", "unstable_2", "unstable_3", "unstable_4"]

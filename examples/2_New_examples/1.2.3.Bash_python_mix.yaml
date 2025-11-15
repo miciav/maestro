@@ -1,0 +1,37 @@
+# -------------------------------------------------------------------------------------
+# Bash/Python Mix
+# -------------------------------------------------------------------------------------
+# A mixed pipeline that alternates Bash and Python tasks, both with significant delays (25-second sleep times each). It is used to test the coexistence and behavior of logs from different executors, as well as the management of sequential wait times. Total duration is approximately 50–60 seconds.
+# -------------------------------------------------------------------------------------
+
+dag:
+  name: "intermediate_bash_python_mix"
+  tasks:
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Starting mixed DAG"
+      dependencies: []
+
+    - task_id: "bash_wait"
+      type: "BashTask"
+      params:
+        script: |
+          echo "Bash waiting 25s..."
+          sleep 25
+      dependencies: ["start"]
+
+    - task_id: "python_wait"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Python waiting 25s...")
+          time.sleep(25)
+      dependencies: ["bash_wait"]
+
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Finished mixed DAG!"
+      dependencies: ["python_wait"]

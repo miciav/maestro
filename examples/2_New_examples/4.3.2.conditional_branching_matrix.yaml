@@ -1,0 +1,136 @@
+abstract: |
+  This difficult-level DAG models a "matrix" of conditional-style branching.
+  From a single Python-based root evaluation, the DAG fans out into four
+  independent branches. Each branch contains a 3-step mini-pipeline mixing
+  PythonTask, BashTask, and PrintTask.
+
+  All four branches run in parallel after the root task and must complete
+  before the final PrintTask is executed. This structure is ideal for:
+    - Stress-testing fan-out and fan-in synchronization
+    - Exercising both Bash and Python executors under concurrent load
+    - Verifying that logging and task ordering remain understandable in
+      complex, parallel DAGs.
+
+dag:
+  name: "conditional_branching_matrix"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) ROOT: condition/value evaluation (informational only).
+    # ---------------------------------------------------------
+    - task_id: "root"
+      type: "PythonTask"
+      params:
+        script: |
+          import random
+          value = random.random()
+          print(f"Root evaluated value: {value}")
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # BRANCH 1 (b1_1 → b1_2 → b1_3)
+    # Python → Bash → Print
+    # ---------------------------------------------------------
+    - task_id: "b1_1"
+      type: "PythonTask"
+      params:
+        script: |
+          nums = [1, 2, 3]
+          print("Branch 1 - step 1, nums:", nums)
+      dependencies: ["root"]
+
+    - task_id: "b1_2"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch 1 - step 2, simple Bash step'"
+      dependencies: ["b1_1"]
+
+    - task_id: "b1_3"
+      type: "PrintTask"
+      params:
+        message: "Branch 1 - step 3 completed."
+      dependencies: ["b1_2"]
+
+    # ---------------------------------------------------------
+    # BRANCH 2 (b2_1 → b2_2 → b2_3)
+    # Bash → Python → Print
+    # ---------------------------------------------------------
+    - task_id: "b2_1"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch 2 - step 1, listing current dir'; ls -1 | head -n 5"
+      dependencies: ["root"]
+
+    - task_id: "b2_2"
+      type: "PythonTask"
+      params:
+        script: |
+          print("Branch 2 - step 2, post-processing Bash output logically.")
+      dependencies: ["b2_1"]
+
+    - task_id: "b2_3"
+      type: "PrintTask"
+      params:
+        message: "Branch 2 - step 3 completed."
+      dependencies: ["b2_2"]
+
+    # ---------------------------------------------------------
+    # BRANCH 3 (b3_1 → b3_2 → b3_3)
+    # Python → Bash → Print
+    # ---------------------------------------------------------
+    - task_id: "b3_1"
+      type: "PythonTask"
+      params:
+        script: |
+          words = ["alpha", "beta", "gamma"]
+          print("Branch 3 - step 1, words:", words)
+      dependencies: ["root"]
+
+    - task_id: "b3_2"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch 3 - step 2, simple echo from Bash'"
+      dependencies: ["b3_1"]
+
+    - task_id: "b3_3"
+      type: "PrintTask"
+      params:
+        message: "Branch 3 - step 3 completed."
+      dependencies: ["b3_2"]
+
+    # ---------------------------------------------------------
+    # BRANCH 4 (b4_1 → b4_2 → b4_3)
+    # Bash → Python → Print
+    # ---------------------------------------------------------
+    - task_id: "b4_1"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch 4 - step 1, checking date'; date"
+      dependencies: ["root"]
+
+    - task_id: "b4_2"
+      type: "PythonTask"
+      params:
+        script: |
+          print("Branch 4 - step 2, Python confirming time was printed above.")
+      dependencies: ["b4_1"]
+
+    - task_id: "b4_3"
+      type: "PrintTask"
+      params:
+        message: "Branch 4 - step 3 completed."
+      dependencies: ["b4_2"]
+
+    # ---------------------------------------------------------
+    # FINAL MERGE: waits for all branch end-nodes.
+    # ---------------------------------------------------------
+    - task_id: "final"
+      type: "PrintTask"
+      params:
+        message: "Matrix DAG completed: all four branches are done."
+      dependencies:
+        - "b1_3"
+        - "b2_3"
+        - "b3_3"
+        - "b4_3"

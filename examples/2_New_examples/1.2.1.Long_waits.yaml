@@ -1,0 +1,47 @@
+# -------------------------------------------------------------------------------------
+# Intermediate Long Waits
+# -------------------------------------------------------------------------------------
+# This DAG implements a linear pipeline composed of three consecutive steps, each characterized by an artificial wait phase (a 20-second sleep). The goal is to simulate a sequence of slow processing, allowing testing of the orchestrator's "attached" mode for a total duration of approximately 60 seconds. The structure is simple, but useful for verifying the behavior of streaming logs in a linear flow.
+# -------------------------------------------------------------------------------------
+
+dag:
+  name: "intermediate_long_waits"
+  tasks:
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Starting long wait DAG"
+      dependencies: []
+
+    - task_id: "step1"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Step 1 running...")
+          time.sleep(20)
+      dependencies: ["start"]
+
+    - task_id: "step2"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Step 2 running...")
+          time.sleep(20)
+      dependencies: ["step1"]
+
+    - task_id: "step3"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Step 3 running...")
+          time.sleep(20)
+      dependencies: ["step2"]
+
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "All steps completed!"
+      dependencies: ["step3"]

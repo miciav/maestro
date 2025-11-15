@@ -1,0 +1,33 @@
+
+abstract: |
+  This DAG extends the original bash_chain by adding a disk usage check and a Python
+  file count operation. It tests sequential task execution and mixed Bash/Python usage.
+
+dag:
+  name: "bash_chain_plus_scan"
+  tasks:
+    - task_id: "list_files"
+      type: "BashTask"
+      params:
+        command: "ls -l"
+      dependencies: []   # First task: lists files
+
+    - task_id: "disk_usage"
+      type: "BashTask"
+      params:
+        command: "du -sh ."
+      dependencies: ["list_files"]   # Depends on list_files
+
+    - task_id: "python_count_files"
+      type: "PythonTask"
+      params:
+        script: |
+          import os
+          print("FILE_COUNT:", len(os.listdir('.')))
+      dependencies: ["disk_usage"]   # Python post-processing
+
+    - task_id: "end"
+      type: "PrintTask"
+      params:
+        message: "Scan complete, file count printed."
+      dependencies: ["python_count_files"]

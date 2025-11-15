@@ -1,0 +1,107 @@
+abstract: |
+  This DAG is a difficult-level extension of the scheduled greeting concept.
+  It introduces a warning-style execution flow where some tasks can emit
+  notices about potential system issues without failing the pipeline.
+
+  After being triggered at the scheduled start_time, the DAG:
+    - Runs standard initialization
+    - Executes three diagnostic branches:
+        * Disk capacity early-warning (Bash)
+        * Memory usage early-warning (Bash)
+        * Python environment sanity-check (Python)
+    - Each branch includes a task that might produce a “warning” message
+      (but never fails the DAG)
+    - Merges the three warning lines into a final scheduled greeting
+
+  This structure tests:
+    - Complex scheduled pipelines
+    - Multibranch warning logic
+    - Sequential and parallel execution mixing Bash and Python
+    - Graceful, non-blocking error/warning reporting
+
+dag:
+  name: "scheduled_greeting_with_warnings"
+  start_time: "2025-10-23T09:00:00"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Scheduled start
+    # ---------------------------------------------------------
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Scheduled diagnostics starting (warning mode)..."
+      dependencies: []
+
+    # =========================================================
+    # BRANCH A — DISK EARLY-WARNING
+    # =========================================================
+    - task_id: "disk_free"
+      type: "BashTask"
+      params:
+        command: "echo 'Checking disk free space:'; df -h | head -n 5"
+      dependencies: ["start"]
+
+    - task_id: "disk_warning"
+      type: "PythonTask"
+      params:
+        script: |
+          # This is not a real fail: it's a warning generator
+          print('WARNING: Disk free space could be evaluated as low (simulated).')
+      dependencies: ["disk_free"]
+
+    # =========================================================
+    # BRANCH B — MEMORY EARLY-WARNING
+    # =========================================================
+    - task_id: "mem_usage"
+      type: "BashTask"
+      params:
+        command: "echo 'Checking memory usage:'; free -h || echo 'free command not available'"
+      dependencies: ["start"]
+
+    - task_id: "mem_warning"
+      type: "PythonTask"
+      params:
+        script: |
+          print('WARNING: Memory usage seems elevated (simulated).')
+      dependencies: ["mem_usage"]
+
+    # =========================================================
+    # BRANCH C — PYTHON ENVIRONMENT SANITY-CHECK
+    # =========================================================
+    - task_id: "py_info"
+      type: "PythonTask"
+      params:
+        script: |
+          import platform
+          print('Python interpreter:', platform.python_version())
+      dependencies: ["start"]
+
+    - task_id: "py_warning"
+      type: "PythonTask"
+      params:
+        script: |
+          print('WARNING: Python environment missing optional modules (simulated).')
+      dependencies: ["py_info"]
+
+    # =========================================================
+    # FINAL MERGE — gather all warnings
+    # =========================================================
+    - task_id: "final_merge"
+      type: "PrintTask"
+      params:
+        message: "All warnings collected. Finalizing scheduled greeting..."
+      dependencies:
+        - "disk_warning"
+        - "mem_warning"
+        - "py_warning"
+
+    # ---------------------------------------------------------
+    # FINAL GREETING
+    # ---------------------------------------------------------
+    - task_id: "greet"
+      type: "PrintTask"
+      params:
+        message: "Good morning! Scheduled diagnostics completed with warnings."
+      dependencies: ["final_merge"]

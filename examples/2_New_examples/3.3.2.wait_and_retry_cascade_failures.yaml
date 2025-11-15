@@ -1,0 +1,54 @@
+abstract: |
+  This DAG simulates a failure-prone cascading pipeline. Each task in the chain may fail randomly and must retry multiple times, causing accumulated delays and chained retry behavior. This test is ideal for verifying long-chain retry stability, timing correctness, and orchestrator behavior when multiple dependent tasks experience intermittent failures.
+
+dag:
+  name: "wait_and_retry_cascade_failures"
+  tasks:
+
+    - task_id: "t1"
+      type: "PythonTask"
+      params:
+        script: |
+          import random, sys
+          if random.random() < .4: sys.exit(1)
+          print("t1 OK")
+      retries: 2
+      retry_delay: 1
+      dependencies: []
+
+    - task_id: "t2"
+      type: "BashTask"
+      params:
+        command: |
+          if [ $((RANDOM % 4)) -eq 0 ]; then exit 1; fi
+          echo "t2 OK"
+      retries: 3
+      retry_delay: 2
+      dependencies: ["t1"]
+
+    - task_id: "t3"
+      type: "PythonTask"
+      params:
+        script: |
+          import random, sys
+          if random.random() < .5: sys.exit(1)
+          print("t3 OK")
+      retries: 2
+      retry_delay: 1
+      dependencies: ["t2"]
+
+    - task_id: "t4"
+      type: "BashTask"
+      params:
+        command: |
+          if [ $((RANDOM % 3)) -eq 0 ]; then exit 1; fi
+          echo "t4 OK"
+      retries: 4
+      retry_delay: 1
+      dependencies: ["t3"]
+
+    - task_id: "done"
+      type: "PrintTask"
+      params:
+        message: "Cascade pipeline completed."
+      dependencies: ["t4"]

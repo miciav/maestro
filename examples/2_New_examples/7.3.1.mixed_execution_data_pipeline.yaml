@@ -1,0 +1,141 @@
+abstract: |
+  This DAG represents a difficult-level mixed execution workflow designed to
+  emulate a realistic multi-stage data pipeline.
+
+  It performs:
+    - Initial logging
+    - Python-based dataset generation (JSON)
+    - Bash-based filtering, extraction, and transformation
+    - Python statistical computations on cleaned data
+    - A two-branch secondary processing stage (parallel)
+    - A final merge followed by a PrintTask summary
+
+  This DAG stresses:
+    - Multi-step Python/Bash handoff via intermediate files
+    - Parallelization of heavy-processing branches
+    - Long dependency chains
+    - Strong orchestrator scheduling and logging capabilities
+
+dag:
+  name: "mixed_execution_data_pipeline"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Initialization
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting complex mixed execution data pipeline..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) Python generates a medium-sized dataset
+    # ---------------------------------------------------------
+    - task_id: "generate_dataset"
+      type: "PythonTask"
+      params:
+        script: |
+          import json, random
+          values = [random.randint(10, 999) for _ in range(50)]
+          with open("dataset.json", "w") as f:
+            json.dump({"values": values}, f)
+          print("Generated dataset.json with 50 integers.")
+      dependencies: ["init"]
+
+    # ---------------------------------------------------------
+    # 3) Bash filters digits from dataset.json
+    #    (raw extraction)
+    # ---------------------------------------------------------
+    - task_id: "extract_digits"
+      type: "BashTask"
+      params:
+        command: "grep -o '[0-9]' dataset.json > digits_raw.txt"
+      dependencies: ["generate_dataset"]
+
+    # ---------------------------------------------------------
+    # 4) Bash aggregates digits into a cleaner file
+    # ---------------------------------------------------------
+    - task_id: "group_digits"
+      type: "BashTask"
+      params:
+        command: "tr -d '\\n' < digits_raw.txt > digits_grouped.txt"
+      dependencies: ["extract_digits"]
+
+    # ---------------------------------------------------------
+    # 5) Python interprets digits as numbers & computes basic stats
+    # ---------------------------------------------------------
+    - task_id: "compute_stats"
+      type: "PythonTask"
+      params:
+        script: |
+          with open("digits_grouped.txt") as f:
+            content = f.read().strip()
+          if not content:
+            print("No digits found.")
+          else:
+            nums = list(map(int, content))
+            print("Digit count:", len(nums))
+            print("Digit sum:", sum(nums))
+            print("Highest digit:", max(nums))
+            print("Lowest digit:", min(nums))
+      dependencies: ["group_digits"]
+
+    # =========================================================
+    # SECONDARY FAN-OUT (two parallel branches)
+    # =========================================================
+
+    # -------- BRANCH A: BASH TRANSFORMATION --------
+    - task_id: "branch_a_reverse"
+      type: "BashTask"
+      params:
+        command: "rev digits_grouped.txt > reversed.txt"
+      dependencies: ["compute_stats"]
+
+    - task_id: "branch_a_count"
+      type: "BashTask"
+      params:
+        command: "wc -m reversed.txt"
+      dependencies: ["branch_a_reverse"]
+
+    # -------- BRANCH B: PYTHON TRANSFORMATION --------
+    - task_id: "branch_b_split"
+      type: "PythonTask"
+      params:
+        script: |
+          with open("digits_grouped.txt") as f:
+            data = f.read().strip()
+          chunks = [data[i:i+5] for i in range(0, len(data), 5)]
+          print("Chunked data:", chunks)
+          with open("chunks.txt", "w") as out:
+            for c in chunks:
+              out.write(c + "\\n")
+      dependencies: ["compute_stats"]
+
+    - task_id: "branch_b_linecount"
+      type: "BashTask"
+      params:
+        command: "wc -l chunks.txt"
+      dependencies: ["branch_b_split"]
+
+    # =========================================================
+    # FINAL MERGE
+    # =========================================================
+
+    - task_id: "final_merge"
+      type: "PrintTask"
+      params:
+        message: "All branches completed. Consolidating results..."
+      dependencies:
+        - "branch_a_count"
+        - "branch_b_linecount"
+
+    # ---------------------------------------------------------
+    # FINAL SUMMARY
+    # ---------------------------------------------------------
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Complex mixed execution data pipeline successfully completed!"
+      dependencies: ["final_merge"]

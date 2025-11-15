@@ -1,0 +1,50 @@
+abstract: |
+  This DAG introduces branching into retry logic. A single unstable root PythonTask fans out into two parallel branches—one Bash, one Python—each with retry settings of their own. Both branches must succeed before reaching the final task. This configuration tests concurrency, retry independence across branches, and orchestrator correctness in parallel retry-based workflows.
+
+dag:
+  name: "wait_and_retry_branching"
+  tasks:
+
+    # Primo task instabile (radice)
+    - task_id: "unstable_root"
+      type: "PythonTask"
+      params:
+        script: |
+          import random, sys
+          if random.random() < 0.5:
+              sys.exit(1)
+          print("Root succeeded!")
+      retries: 3
+      retry_delay: 2
+      dependencies: []
+
+    # Ramo 1
+    - task_id: "branch_a"
+      type: "BashTask"
+      params:
+        command: |
+          if [ $((RANDOM % 2)) -eq 0 ]; then exit 1; fi
+          echo "Branch A OK"
+      retries: 2
+      retry_delay: 1
+      dependencies: ["unstable_root"]
+
+    # Ramo 2
+    - task_id: "branch_b"
+      type: "PythonTask"
+      params:
+        script: |
+          import random, sys
+          if random.random() < 0.3:
+              sys.exit(1)
+          print("Branch B OK")
+      retries: 3
+      retry_delay: 1
+      dependencies: ["unstable_root"]
+
+    # Fusione
+    - task_id: "done"
+      type: "PrintTask"
+      params:
+        message: "Branching retry pipeline complete."
+      dependencies: ["branch_a", "branch_b"]

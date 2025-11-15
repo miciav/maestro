@@ -1,0 +1,118 @@
+abstract: |
+  This DAG represents the most complex variant of the scheduled greeting series.
+  Instead of a wide multi-branch structure, this version stresses the orchestrator
+  through a *deep linear pipeline* of many sequential tasks that mix Bash, Python,
+  and Print operations.
+
+  After starting at the specified start_time, the DAG performs:
+    - Several low-level checks (environment, directory, process snapshot)
+    - A multi-step data-processing simulation in Python
+    - Several Bash tasks that transform intermediate results
+    - A final merge into a greeting message
+
+  This sequential depth tests:
+    - Long-chain dependency resolution
+    - Logging consistency over many tasks
+    - Accumulated scheduling latency
+    - Cross-executor transitions (Print → Bash → Python → Bash → Python → ...)
+
+  It is recommended for validating stability during long-running DAGs.
+
+dag:
+  name: "scheduled_greeting_deep_pipeline"
+  start_time: "2025-10-23T09:00:00"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) START
+    # ---------------------------------------------------------
+    - task_id: "t1_start"
+      type: "PrintTask"
+      params:
+        message: "Deep pipeline scheduled run started..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) ENVIRONMENT CHECKS
+    # ---------------------------------------------------------
+    - task_id: "t2_show_date"
+      type: "BashTask"
+      params:
+        command: "echo 'Current date:'; date"
+      dependencies: ["t1_start"]
+
+    - task_id: "t3_list_dir"
+      type: "BashTask"
+      params:
+        command: "echo 'Listing working directory:'; ls -1"
+      dependencies: ["t2_show_date"]
+
+    - task_id: "t4_process_snapshot"
+      type: "BashTask"
+      params:
+        command: "echo 'Process snapshot:'; ps aux | head -n 5"
+      dependencies: ["t3_list_dir"]
+
+    # ---------------------------------------------------------
+    # 3) PYTHON DATA PROCESSING SIMULATION
+    # ---------------------------------------------------------
+    - task_id: "t5_generate_numbers"
+      type: "PythonTask"
+      params:
+        script: |
+          nums = list(range(1, 11))
+          print("Generated numbers:", nums)
+      dependencies: ["t4_process_snapshot"]
+
+    - task_id: "t6_square_numbers"
+      type: "PythonTask"
+      params:
+        script: |
+          nums = list(range(1, 11))
+          squares = [n*n for n in nums]
+          print("Square numbers:", squares)
+      dependencies: ["t5_generate_numbers"]
+
+    - task_id: "t7_sum_squares"
+      type: "PythonTask"
+      params:
+        script: |
+          nums = list(range(1, 11))
+          squares = [n*n for n in nums]
+          print("Sum of squares:", sum(squares))
+      dependencies: ["t6_square_numbers"]
+
+    # ---------------------------------------------------------
+    # 4) BASH DATA TRANSFORMATION SIMULATION
+    # ---------------------------------------------------------
+    - task_id: "t8_fake_export"
+      type: "BashTask"
+      params:
+        command: "echo 'Exporting data... (simulated)'"
+      dependencies: ["t7_sum_squares"]
+
+    - task_id: "t9_fake_compress"
+      type: "BashTask"
+      params:
+        command: "echo 'Compressing data... (simulated)'"
+      dependencies: ["t8_fake_export"]
+
+    # ---------------------------------------------------------
+    # 5) PYTHON FINAL CHECK
+    # ---------------------------------------------------------
+    - task_id: "t10_python_summary"
+      type: "PythonTask"
+      params:
+        script: |
+          print("Final Python summary OK.")
+      dependencies: ["t9_fake_compress"]
+
+    # ---------------------------------------------------------
+    # 6) FINAL GREETING
+    # ---------------------------------------------------------
+    - task_id: "t11_finish"
+      type: "PrintTask"
+      params:
+        message: "Deep scheduled pipeline completed. Good morning!"
+      dependencies: ["t10_python_summary"]

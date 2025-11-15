@@ -1,0 +1,125 @@
+abstract: |
+  This DAG represents a high-complexity scheduled pipeline that performs a
+  multi-branch system healthcheck immediately after being triggered at the
+  specified start_time.
+
+  It performs:
+    - A scheduled initialization message
+    - A three-branch parallel healthcheck:
+        * Disk usage check (Bash)
+        * Process list inspection (Bash)
+        * Python runtime diagnostic (Python)
+    - A second tier of validation tasks combining results
+    - A final merge followed by an end-of-run greeting message
+
+  This DAG stresses:
+    - Multi-branch parallelism after scheduled activation
+    - Mixed Python/Bash execution patterns
+    - Multi-level fan-out/fan-in consolidation
+    - Readability of logs under intense task parallelism
+
+dag:
+  name: "scheduled_greeting_full_healthcheck"
+  start_time: "2025-10-23T09:00:00"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Scheduled activation
+    # ---------------------------------------------------------
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Scheduled healthcheck triggered. Beginning diagnostics..."
+      dependencies: []
+
+    # =========================================================
+    # PRIMARY FAN-OUT — three healthcheck branches
+    # =========================================================
+
+    # -------- BRANCH A: DISK HEALTH --------
+    - task_id: "disk_usage"
+      type: "BashTask"
+      params:
+        command: "echo 'Disk usage:'; df -h | head -n 5"
+      dependencies: ["start"]
+
+    - task_id: "disk_inodes"
+      type: "BashTask"
+      params:
+        command: "echo 'Inode usage:'; df -i | head -n 5"
+      dependencies: ["disk_usage"]
+
+    # -------- BRANCH B: PROCESS HEALTH --------
+    - task_id: "proc_list"
+      type: "BashTask"
+      params:
+        command: "echo 'Process snapshot:'; ps aux | head -n 5"
+      dependencies: ["start"]
+
+    - task_id: "proc_count"
+      type: "BashTask"
+      params:
+        command: "echo 'Process count:'; ps aux | wc -l"
+      dependencies: ["proc_list"]
+
+    # -------- BRANCH C: PYTHON RUNTIME HEALTH --------
+    - task_id: "python_version"
+      type: "PythonTask"
+      params:
+        script: |
+          import platform
+          print('Python version:', platform.python_version())
+      dependencies: ["start"]
+
+    - task_id: "python_math_check"
+      type: "PythonTask"
+      params:
+        script: |
+          import math
+          print('Sanity check: sqrt(256) =', math.sqrt(256))
+      dependencies: ["python_version"]
+
+    # =========================================================
+    # SECONDARY FAN-IN (partial merges)
+    # =========================================================
+
+    - task_id: "merge_disk"
+      type: "PrintTask"
+      params:
+        message: "Disk health checks complete."
+      dependencies: ["disk_inodes"]
+
+    - task_id: "merge_proc"
+      type: "PrintTask"
+      params:
+        message: "Process health checks complete."
+      dependencies: ["proc_count"]
+
+    - task_id: "merge_python"
+      type: "PrintTask"
+      params:
+        message: "Python runtime checks complete."
+      dependencies: ["python_math_check"]
+
+    # =========================================================
+    # FINAL MERGE — all health lines must be green
+    # =========================================================
+
+    - task_id: "final_merge"
+      type: "PrintTask"
+      params:
+        message: "All system healthchecks completed successfully. Consolidating..."
+      dependencies:
+        - "merge_disk"
+        - "merge_proc"
+        - "merge_python"
+
+    # ---------------------------------------------------------
+    # FINAL GREETING
+    # ---------------------------------------------------------
+    - task_id: "greet"
+      type: "PrintTask"
+      params:
+        message: "Good morning! System is healthy. Scheduled healthcheck complete."
+      dependencies: ["final_merge"]

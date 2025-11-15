@@ -1,0 +1,65 @@
+abstract: |
+  This DAG extends the original conditional branching example by introducing a
+  preliminary initialization step, a Python-based condition evaluator, and two
+  parallel branches that each perform a different kind of system check. Both
+  branches then converge into a final PrintTask summarizing the pipeline.
+
+  Compared to the original version, this one:
+    - Adds a starting PrintTask for clarity.
+    - Splits the execution into two meaningful branches (file listing and process listing).
+    - Maintains the concept of conditional branching, although both branches run regardless
+      of the evaluated condition, making it ideal for testing parallel execution behavior.
+
+dag:
+  name: "conditional_branching_extended"
+
+  tasks:
+    # ---------------------------------------------------------
+    # 1) Initialization step: ensures the DAG begins cleanly.
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting extended conditional branching DAG..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) A PythonTask evaluating a random condition.
+    #    Both branches in this example will run regardless,
+    #    but this helps test logic, logging, and Python output.
+    # ---------------------------------------------------------
+    - task_id: "evaluate_condition"
+      type: "PythonTask"
+      params:
+        script: |
+          import random
+          condition = "A" if random.random() > 0.5 else "B"
+          print(f"Condition evaluated: {condition}")
+      dependencies: ["init"]
+
+    # ---------------------------------------------------------
+    # 3) Branch A: performs a file-system related check.
+    # ---------------------------------------------------------
+    - task_id: "branch_a_action"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch A: Listing files'; ls -1 | head -n 5"
+      dependencies: ["evaluate_condition"]
+
+    # ---------------------------------------------------------
+    # 4) Branch B: prints some process info.
+    # ---------------------------------------------------------
+    - task_id: "branch_b_action"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch B: Listing processes'; ps aux | head -n 5"
+      dependencies: ["evaluate_condition"]
+
+    # ---------------------------------------------------------
+    # 5) Final merge: executed only when both branches finish.
+    # ---------------------------------------------------------
+    - task_id: "final_message"
+      type: "PrintTask"
+      params:
+        message: "Extended conditional branching DAG finished!"
+      dependencies: ["branch_a_action", "branch_b_action"]

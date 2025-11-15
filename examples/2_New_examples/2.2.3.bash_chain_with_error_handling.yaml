@@ -1,0 +1,35 @@
+
+abstract: |
+  This DAG tests error handling with fail_fast disabled. A failing BashTask is followed
+  by Python and Print tasks that continue running regardless of the failure.
+
+dag:
+  name: "bash_chain_with_error_handling"
+  config:
+    fail_fast: false
+
+  tasks:
+    - task_id: "list_files"
+      type: "BashTask"
+      params:
+        command: "ls -l"
+      dependencies: []
+
+    - task_id: "intentional_error"
+      type: "BashTask"
+      params:
+        command: "non_existing_command_xyz"   # Guaranteed to fail
+      dependencies: ["list_files"]
+
+    - task_id: "python_info"
+      type: "PythonTask"
+      params:
+        script: |
+          print("This runs even after a failure.")
+      dependencies: ["intentional_error"]
+
+    - task_id: "end"
+      type: "PrintTask"
+      params:
+        message: "Execution completed with error handling."
+      dependencies: ["python_info"]

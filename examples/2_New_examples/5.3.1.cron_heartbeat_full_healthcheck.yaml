@@ -1,0 +1,58 @@
+abstract: |
+  This DAG represents a full periodic healthcheck pipeline executed at every cron interval. It fans out into multiple parallel branches performing disk, process, and Python runtime diagnostics, then merges them into a summary task. Designed for stress testing recurring parallel workloads, deep logging, and high-frequency health monitoring.
+
+dag:
+  name: "cron_heartbeat_full_healthcheck"
+  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+
+  tasks:
+    # ROOT
+    - task_id: "heartbeat_start"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat: starting full healthcheck..."
+      dependencies: []
+
+    # BRANCH CPU
+    - task_id: "check_cpu"
+      type: "PythonTask"
+      params:
+        script: |
+          print("CPU usage check (simulated).")
+      dependencies: ["heartbeat_start"]
+
+    # BRANCH MEMORIA
+    - task_id: "check_memory"
+      type: "BashTask"
+      params:
+        command: "free -h || echo 'free command not available'"
+      dependencies: ["heartbeat_start"]
+
+    # BRANCH DISCO
+    - task_id: "check_disk"
+      type: "BashTask"
+      params:
+        command: "df -h | head -n 10"
+      dependencies: ["heartbeat_start"]
+
+    # BRANCH PROCESSI
+    - task_id: "check_processes"
+      type: "BashTask"
+      params:
+        command: "ps aux | head -n 10"
+      dependencies: ["heartbeat_start"]
+
+    # AGGREGAZIONE LOGICA (qui potresti, in futuro, interpretare output reali)
+    - task_id: "aggregate_results"
+      type: "PythonTask"
+      params:
+        script: |
+          print("Aggregating healthcheck results (simulation). Overall: OK")
+      dependencies: ["check_cpu", "check_memory", "check_disk", "check_processes"]
+
+    # MESSAGGIO FINALE
+    - task_id: "heartbeat_done"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat full healthcheck completed."
+      dependencies: ["aggregate_results"]
