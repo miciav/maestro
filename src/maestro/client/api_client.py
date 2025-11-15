@@ -95,6 +95,7 @@ class MaestroAPIClient:
         return response.json()
 
 
+    # TODO: refactor, this is used only for testing
     def stream_dag_logs_v1(
         self,
         dag_id: str,
@@ -104,11 +105,11 @@ class MaestroAPIClient:
     ) -> Iterator[Dict[str, Any]]:
         """
         Stream logs for a specific DAG execution in real-time using the v1 API.
-        FIXED VERSION — points to the correct server endpoint.
+        FIX: punta all'endpoint /v1/logs/{dag_id}/attach esposto dal server.
         """
 
-        # Correct endpoint for streaming (SSE)
-        endpoint = f"/api/v1/logs/{dag_id}/attach"
+        # 🚩 QUI il vero fix: usare "logs" e non "dags", e mantenere il prefisso /v1
+        endpoint = f"/v1/logs/{dag_id}/attach"
 
         params = {}
         if execution_id:
@@ -118,7 +119,6 @@ class MaestroAPIClient:
         if level_filter:
             params["level_filter"] = level_filter
 
-        # Build full URL
         url = f"{self.base_url}{endpoint}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
@@ -133,15 +133,15 @@ class MaestroAPIClient:
 
                     line = line.decode("utf-8").strip()
                     if line.startswith("data: "):
-                        payload = line[len("data: "):]
+                        data = line[len("data: "):]
                         try:
-                            yield json.loads(payload)
+                            yield json.loads(data)
                         except json.JSONDecodeError:
                             continue
 
         except requests.exceptions.ConnectionError:
             raise ConnectionError(f"Could not connect to Maestro server at {self.base_url}")
-        except requests.exceptions.HTTPError:
+        except requests.exceptions.HTTPError as e:
             raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
 
     
