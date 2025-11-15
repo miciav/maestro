@@ -1,56 +1,13 @@
 .
 ├── CONCURRENT_EXECUTION.md
+├── data.json
 ├── debug_task_execution.py
-├── docs
-│   ├── DAG_START_TIME.md
-│   ├── maestro-icon.png
-│   ├── maestro_icon.svg
-│   └── open_issues.md
-├── examples
-│   ├── 1_Old_examples
-│   │   ├── cron_examples_dag.yaml
-│   │   ├── cron_scheduled_dag.yaml
-│   │   ├── dag_id_generation_example.md
-│   │   ├── long_sample_dag.yaml
-│   │   ├── playbooks
-│   │   │   ├── add_nat_rules.yml
-│   │   │   ├── configure-vms.yml
-│   │   │   ├── docker_install.yml
-│   │   │   ├── install_openfaas.yml
-│   │   │   ├── k3s_install.yml
-│   │   │   └── remove_nat_rules.yml
-│   │   ├── sample_dag2.yaml
-│   │   ├── sample_dag.yaml
-│   │   ├── scheduled_dag.yaml
-│   │   ├── simple_test_dag.yaml
-│   │   ├── templates
-│   │   │   ├── inventory-nat-rules.ini.tpl
-│   │   │   └── ssh_inventory.ini.j2
-│   │   ├── terraform
-│   │   │   ├── maestro.db
-│   │   │   ├── main.tf
-│   │   │   ├── terraform.tfstate
-│   │   │   ├── terraform.tfstate.backup
-│   │   │   ├── terraform.tfvars.example
-│   │   │   ├── tfplan
-│   │   │   ├── variables.tf
-│   │   │   ├── vm_creation_flow.md
-│   │   │   └── wait_for_vm.sh
-│   │   └── test_dag.yaml
-│   └── 2_New_examples
-│       ├── 1_basic_linear.yaml
-│       ├── 2_bash_chain.yaml
-│       ├── 3_wait_and_retry.yaml
-│       ├── 4_conditional_branching.yaml
-│       ├── 5_cron_heartbeat.yaml
-│       ├── 6_scheduled_greeting.yaml
-│       ├── 7_mixed_execution.yaml
-│       └── DAG explanation.ods
+├── docs (contiene immagini e contenuti descrittivi)
+├── examples (contiene gli esempi di DAG per provare l'orchestratore)
+├── folder_structure.txt
 ├── Initial setting.txt
 ├── maestro.db
-├── pictures
-│   ├── Screenshot 2025-07-14 at 15.54.28.png
-│   └── Screenshot 2025-07-18 at 19.15.10.png
+├── pictures (contiene solo immagini di prova)
 ├── pyproject.toml
 ├── pytest.ini
 ├── README.md
@@ -61,35 +18,19 @@
 │   │   ├── client
 │   │   │   ├── api_client.py
 │   │   │   ├── cli.py
-│   │   │   ├── __init__.py
-│   │   │   └── __pycache__
-│   │   │       ├── api_client.cpython-312.pyc
-│   │   │       ├── cli.cpython-312.pyc
-│   │   │       └── __init__.cpython-312.pyc
+│   │   │   └── __init__.py
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   └── __init__.cpython-312.pyc
 │   │   ├── server
 │   │   │   ├── api
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── __pycache__
-│   │   │   │   │   └── __init__.cpython-312.pyc
 │   │   │   │   └── v1
 │   │   │   │       ├── __init__.py
-│   │   │   │       ├── __pycache__
-│   │   │   │       │   ├── __init__.cpython-312.pyc
-│   │   │   │       │   └── router.cpython-312.pyc
 │   │   │   │       ├── router.py
 │   │   │   │       └── routes
 │   │   │   │           ├── dags.py
 │   │   │   │           ├── health.py
 │   │   │   │           ├── __init__.py
-│   │   │   │           ├── logs.py
-│   │   │   │           └── __pycache__
-│   │   │   │               ├── dags.cpython-312.pyc
-│   │   │   │               ├── health.cpython-312.pyc
-│   │   │   │               ├── __init__.cpython-312.pyc
-│   │   │   │               └── logs.cpython-312.pyc
+│   │   │   │           └── logs.py
 │   │   │   ├── app.py
 │   │   │   ├── __init__.py
 │   │   │   ├── internals
@@ -101,61 +42,29 @@
 │   │   │   │   │   ├── __init__.py
 │   │   │   │   │   ├── kubernetes.py
 │   │   │   │   │   ├── local.py
-│   │   │   │   │   ├── __pycache__
-│   │   │   │   │   │   ├── base.cpython-312.pyc
-│   │   │   │   │   │   ├── docker.cpython-312.pyc
-│   │   │   │   │   │   ├── factory.cpython-312.pyc
-│   │   │   │   │   │   ├── __init__.cpython-312.pyc
-│   │   │   │   │   │   ├── kubernetes.cpython-312.pyc
-│   │   │   │   │   │   ├── local.cpython-312.pyc
-│   │   │   │   │   │   └── ssh.cpython-312.pyc
 │   │   │   │   │   └── ssh.py
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── models.py
 │   │   │   │   ├── orchestrator.py
-│   │   │   │   ├── __pycache__
-│   │   │   │   │   ├── dag_loader.cpython-312.pyc
-│   │   │   │   │   ├── __init__.cpython-312.pyc
-│   │   │   │   │   ├── models.cpython-312.pyc
-│   │   │   │   │   ├── orchestrator.cpython-312.pyc
-│   │   │   │   │   ├── status_manager.cpython-312.pyc
-│   │   │   │   │   └── task_registry.cpython-312.pyc
 │   │   │   │   ├── status_manager.py
 │   │   │   │   └── task_registry.py
-│   │   │   ├── __pycache__
-│   │   │   │   ├── app.cpython-312.pyc
-│   │   │   │   └── __init__.cpython-312.pyc
 │   │   │   ├── services
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── __pycache__
-│   │   │   │   │   ├── __init__.cpython-312.pyc
-│   │   │   │   │   └── scheduler_service.cpython-312.pyc
 │   │   │   │   └── scheduler_service.py
 │   │   │   └── tasks
 │   │   │       ├── ansible_task.py
 │   │   │       ├── base.py
+│   │   │       ├── bash_task.py
 │   │   │       ├── extended_terraform_task.py
 │   │   │       ├── file_writer_task.py
 │   │   │       ├── __init__.py
 │   │   │       ├── print_task.py
-│   │   │       ├── __pycache__
-│   │   │       │   ├── ansible_task.cpython-312.pyc
-│   │   │       │   ├── base.cpython-312.pyc
-│   │   │       │   ├── extended_terraform_task.cpython-312.pyc
-│   │   │       │   ├── file_writer_task.cpython-312.pyc
-│   │   │       │   ├── __init__.cpython-312.pyc
-│   │   │       │   ├── print_task.cpython-312.pyc
-│   │   │       │   ├── terraform_task.cpython-312.pyc
-│   │   │       │   └── wait_task.cpython-312.pyc
+│   │   │       ├── python_task.py
 │   │   │       ├── terraform_task.py
 │   │   │       └── wait_task.py
 │   │   └── shared
 │   │       ├── dag.py
 │   │       ├── __init__.py
-│   │       ├── __pycache__
-│   │       │   ├── dag.cpython-312.pyc
-│   │       │   ├── __init__.cpython-312.pyc
-│   │       │   └── task.cpython-312.pyc
 │   │       └── task.py
 │   └── maestro.egg-info
 │       ├── dependency_links.txt
@@ -164,77 +73,8 @@
 │       ├── requires.txt
 │       ├── SOURCES.txt
 │       └── top_level.txt
-├── struttura.txt
 ├── test_dag_status.py
 ├── test_run_dag.py
-├── tests
-│   ├── conftest.py
-│   ├── integration
-│   │   ├── conftest.py
-│   │   ├── __pycache__
-│   │   │   ├── conftest.cpython-312-pytest-7.4.4.pyc
-│   │   │   ├── conftest.cpython-312-pytest-8.4.1.pyc
-│   │   │   ├── test_cli_rest_integration.cpython-312-pytest-7.4.4.pyc
-│   │   │   ├── test_cli_rest_integration.cpython-312-pytest-8.4.1.pyc
-│   │   │   ├── test_debug_server.cpython-312-pytest-7.4.4.pyc
-│   │   │   ├── test_debug_server.cpython-312-pytest-8.4.1.pyc
-│   │   │   ├── test_server_api_integration.cpython-312-pytest-7.4.4.pyc
-│   │   │   └── test_server_api_integration.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_cli_rest_integration.py
-│   │   ├── test_debug_server.py
-│   │   └── test_server_api_integration.py
-│   ├── maestro.db
-│   ├── __pycache__
-│   │   ├── conftest.cpython-312-pytest-7.4.4.pyc
-│   │   ├── conftest.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_ansible_task.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_ansible_task.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_ansible_task.cpython-312-pytest-8.4.1.pyc.8528
-│   │   ├── test_api_client.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_api_client.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_cli_attach.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_cli_attach.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_cli_attach.cpython-312-pytest-8.4.1.pyc.8528
-│   │   ├── test_cli_client.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_cli_client.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_cli_integration.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_cli_integration.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_cron_feature.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_cron_feature.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_dag.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_dag.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_dag_id_generation.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_dag_id_generation.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_db_feature.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_db_feature.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_enhanced_cli.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_enhanced_cli.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_extended_terraform_task.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_extended_terraform_task.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_multi_executor.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_multi_executor.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_orchestrator_dagloader.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_orchestrator_dagloader.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_server.cpython-312-pytest-7.4.4.pyc
-│   │   ├── test_server.cpython-312-pytest-8.4.1.pyc
-│   │   ├── test_status_manager.cpython-312-pytest-7.4.4.pyc
-│   │   └── test_status_manager.cpython-312-pytest-8.4.1.pyc
-│   ├── test_ansible_task.py
-│   ├── test_api_client.py
-│   ├── test_cli_attach.py
-│   ├── test_cli_client.py
-│   ├── test_cli_integration.py
-│   ├── test_cron_feature.py
-│   ├── test_dag_id_generation.py
-│   ├── test_dag.py
-│   ├── test_db_feature.py
-│   ├── test_enhanced_cli.py
-│   ├── test_extended_terraform_task.py
-│   ├── test_multi_executor.py
-│   ├── test_orchestrator_dagloader.py
-│   ├── test_server.py
-│   └── test_status_manager.py
+├── tests (contiene i test automatici che occorrono a testare l'orchestratore)
 ├── TEST_SUITE.md
 └── uv.lock
-
-37 directories, 201 files
