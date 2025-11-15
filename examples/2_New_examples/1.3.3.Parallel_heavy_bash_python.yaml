@@ -16,7 +16,7 @@ dag:
     - task_id: "bash_long"
       type: "BashTask"
       params:
-        script: |
+        command: |
           echo "Bash running long task..."
           sleep 45
       dependencies: ["start"]
