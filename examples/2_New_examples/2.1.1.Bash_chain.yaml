@@ -9,7 +9,7 @@ dag:
     - task_id: "count_lines"
       type: "BashTask"
       params:
-        command: "wc -l <<< 'Counting lines from previous output'"
+        command: "echo 'Counting lines from previous output' | wc -l"
       dependencies: ["list_files"]
     - task_id: "end"
       type: "PrintTask"

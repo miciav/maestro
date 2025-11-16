@@ -1,6 +1,8 @@
 import subprocess
 import logging
 from maestro.server.tasks.base import BaseTask
+from maestro.server.internals.status_manager import StatusManager
+
 
 logger = logging.getLogger(__name__)
 logger.propagate = True
@@ -13,38 +15,68 @@ class BashTask(BaseTask):
 
     command: str
 
+
     def execute_local(self):
-        logger.info(f"[BashTask] Executing command: {self.command}")
-        try:
-            result = subprocess.run(
-                self.command,
-                shell=True,
-                executable="/bin/bash",
-                capture_output=True,
-                text=True
+        """
+        BashTask: esegue il comando e registra stdout/stderr nel DB riga per riga,
+        con timestamp corretto come PythonTask.
+        """
+        sm = StatusManager.get_instance()
+        dag_id = self.dag_id
+        execution_id = self.execution_id
+        task_id = self.task_id
+
+        process = subprocess.Popen(
+            self.command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+
+        # Leggi STDOUT riga per riga
+        for line in process.stdout:
+            clean = line.rstrip("\n")
+            msg = f"[BashTask][stdout] {clean}"
+
+            print(msg, flush=True)
+
+            sm.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=msg,
+                level="INFO"
             )
 
-            # --- LOG STDOUT LINE BY LINE ---
-            if result.stdout:
-                for line in result.stdout.strip().splitlines():
-                    logger.info(f"[BashTask][stdout] {line}")
+        # Leggi STDERR riga per riga
+        for line in process.stderr:
+            clean = line.rstrip("\n")
+            msg = f"[BashTask][stderr] {clean}"
 
-            # --- LOG STDERR LINE BY LINE ---
-            if result.stderr:
-                for line in result.stderr.strip().splitlines():
-                    logger.error(f"[BashTask][stderr] {line}")
+            print(msg, flush=True)
 
-            # --- Set task status ---
-            if result.returncode == 0:
-                logger.info("[BashTask] Command completed successfully.")
-                self.status = "completed"
-            else:
-                logger.error(f"[BashTask] Command failed with return code {result.returncode}.")
-                self.status = "failed"
+            sm.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=msg,
+                level="ERROR"
+            )
 
-        except Exception as e:
-            logger.exception(f"[BashTask] Exception while executing command: {e}")
-            self.status = "failed"
+        # Ritorno exit code
+        process.wait()
+
+        if process.returncode != 0:
+            sm.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=f"[BashTask] Failed with exit code {process.returncode}",
+                level="ERROR"
+            )
+
 
     def to_dict(self):
         """Include the command field in serialized form."""
