@@ -171,46 +171,42 @@ async def attach_dag_logs(
     Minimal patch: stabilizes streaming by fixing ordering & cursor management.
     No DB changes required.
     """
+
     async def log_streamer():
+        last_seen = set()
         last_timestamp = None
-        displayed_logs = set()
 
         while True:
             try:
                 with orchestrator.status_manager as sm:
                     logs = sm.get_execution_logs(dag_id, execution_id, limit=200)
 
-                    # 👉 SORT logs OLDEST → NEWEST (important!)
+                    # Ordina dal più vecchio al più recente
                     logs = sorted(logs, key=lambda x: x["timestamp"])
 
-                    # Apply filters
-                    if task_filter:
-                        logs = [log for log in logs if log["task_id"] == task_filter]
-                    if level_filter:
-                        logs = [log for log in logs if log["level"].upper() == level_filter.upper()]
-
                     new_logs = []
-
                     for log in logs:
-                        # Build unique log key
-                        log_key = f"{log['timestamp']}_{log['task_id']}_{log['level']}_{log['message'][:50]}"
+                        key = f"{log['timestamp']}-{log['task_id']}-{log['message'][:50]}"
+                        if key not in last_seen:
+                            new_logs.append(log)
+                            last_seen.add(key)
+                            last_timestamp = log["timestamp"]
 
-                        # 👉 Ensure ordering works: if timestamp is new or unseen, stream it
-                        if log_key not in displayed_logs:
-                            if last_timestamp is None or log["timestamp"] >= last_timestamp:
-                                new_logs.append(log)
-                                displayed_logs.add(log_key)
-                                last_timestamp = log["timestamp"]
-
-                    # 👉 Stream logs in natural order (no reversed!)
+                    # STREAM DEI LOG
                     for log in new_logs:
                         yield f"data: {json.dumps(log)}\n\n"
 
-                await asyncio.sleep(0.5)
+                    # 🔥 TERMINAZIONE AUTOMATICA STREAM
+                    exec_info = sm.get_latest_execution(dag_id)
+                    if exec_info and exec_info["status"] in ("completed", "failed", "cancelled"):
+                        yield 'data: {"event": "DAG_COMPLETED"}\n\n'
+                        return
+
+                await asyncio.sleep(0.3)
 
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                break
+                return
 
     return StreamingResponse(
         log_streamer(),

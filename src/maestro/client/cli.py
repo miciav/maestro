@@ -288,6 +288,11 @@ def attach(
                 console.print(f"[red]Stream error: {log_entry['error']}[/red]")
                 break
             
+            # 👉 Evento interno del server: DAG completata → detach automatico
+            if "event" in log_entry and log_entry["event"] == "DAG_COMPLETED":
+                console.print("\n[green][DAG COMPLETED] Detaching...[/green]\n")
+                return
+
             level_style = {
                 "ERROR": "red",
                 "WARNING": "yellow",
