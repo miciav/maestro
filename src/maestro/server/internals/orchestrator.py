@@ -36,22 +36,26 @@ class DatabaseLogHandler(logging.Handler):
         self.current_task_id = task_id
 
     def emit(self, record):
-        """Emit a log record to the database."""
+        """Emit a log record to the database, preserving the real timestamp."""
         if self.current_dag_id and self.current_execution_id:
             try:
-                log_entry = self.format(record)
-                # Use the provided StatusManager instance
+                # Timestamp reale del LogRecord
+                log_timestamp = datetime.fromtimestamp(record.created)
+
+                # Messaggio grezzo (senza metadata RichHandler)
+                log_message = record.getMessage()
+
                 with self.status_manager as sm:
                     sm.log_message(
                         dag_id=self.current_dag_id,
                         execution_id=self.current_execution_id,
                         task_id=self.current_task_id or "system",
                         level=record.levelname,
-                        message=log_entry
+                        message=log_message,
+                        timestamp=log_timestamp
                     )
             except Exception:
-                # Don't let logging errors break the application
-                pass
+                pass  # Non deve mai rompere l'esecuzione
 
 
 class Orchestrator:

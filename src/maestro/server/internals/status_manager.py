@@ -314,19 +314,33 @@ class StatusManager:
                 ]
             }
 
-    def log_message(self, dag_id: str, execution_id: str, task_id: str, level: str, message: str):
+    def log_message(self, dag_id: str, execution_id: str, task_id: str,
+                    level: str, message: str,
+                    timestamp: Optional[datetime] = None):
+        """Store a log message with an optional externally provided timestamp."""
         with self.Session.begin() as session:
-            log = LogORM(dag_id=dag_id, execution_id=execution_id, task_id=task_id, level=level, message=message, thread_id=str(threading.current_thread().ident))
+            log = LogORM(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                level=level,
+                message=message,
+                timestamp=timestamp or datetime.now(),
+                thread_id=str(threading.current_thread().ident)
+            )
             session.add(log)
 
-    # 🆕 Metodo helper per aggiungere log in modo più comodo
-    def add_log(self, dag_id: str, execution_id: str, task_id: str, message: str, level: str = "INFO"):
+    def add_log(self, dag_id: str, execution_id: str, task_id: str,
+                message: str, level: str = "INFO",
+                timestamp: Optional[datetime] = None):
+        """Helper wrapper for log_message() with timestamp support."""
         self.log_message(
             dag_id=dag_id,
             execution_id=execution_id,
             task_id=task_id,
             level=level,
-            message=message
+            message=message,
+            timestamp=timestamp
         )
 
     def get_execution_logs(self, dag_id: str, execution_id: str = None, limit: int = 100) -> List[Dict[str, Any]]:
