@@ -287,7 +287,7 @@ class Orchestrator:
                 'maestro.server.tasks.extended_terraform_task',
                 'maestro.server.tasks.print_task',
                 'maestro.server.tasks.python_task',
-                'maestro.server.tasks.bash_task',   # ✅ eccolo
+                'maestro.server.tasks.bash_task',
                 'maestro.core.executors.ssh',
                 'maestro.core.executors.docker',
                 'maestro.core.executors.local',
@@ -295,8 +295,20 @@ class Orchestrator:
 
             for logger_name in task_loggers:
                 logger = logging.getLogger(logger_name)
+
+                # Pulisce eventuali handler duplicati
+                logger.handlers.clear()
+
+                # Aggancia DB handler
                 logger.addHandler(db_handler)
-                logger.propagate = True
+
+                # Aggancia anche RichHandler (console) che sta sul root
+                for h in logging.getLogger().handlers:
+                    if isinstance(h, RichHandler):
+                        logger.addHandler(h)
+
+                logger.setLevel(logging.INFO)
+                logger.propagate = False
 
         try:
             # Use concurrent execution
