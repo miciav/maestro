@@ -17,6 +17,29 @@ import json
 
 from .api_client import MaestroAPIClient
 
+def _print_status_table(console, dag_id: str, execution_id: str, status: dict):
+    """
+    Helper per stampare lo stesso output di 'maestro status'.
+    """
+    from rich.table import Table
+
+    table = Table(title=f"DAG Status — {dag_id} ({execution_id})")
+
+    table.add_column("Task ID", style="magenta")
+    table.add_column("Status", style="cyan")
+    table.add_column("Started", style="green")
+    table.add_column("Completed", style="yellow")
+
+    for task in status.get("tasks", []):
+        table.add_row(
+            task["task_id"],
+            task["status"],
+            task.get("started_at", "") or "",
+            task.get("completed_at", "") or ""
+        )
+
+    console.print(table)
+
 app = typer.Typer(help="Maestro CLI Client - Communicate with Maestro REST API server")
 console = Console()
 
@@ -66,8 +89,9 @@ def run(
     server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
 ):
     """
-    Run a DAG: default = attached mode (stream logs until completion).
-    Use --detach to run without attaching to logs.
+    Run a DAG.
+    - Default = attached mode (stream logs until completion)
+    - --detach = detached mode with automatic status reporting at the end
     """
 
     api_client.base_url = server_url
@@ -75,7 +99,7 @@ def run(
 
     console.print(f"[cyan]Creating DAG from file: {dag_file}[/cyan]")
 
-    # 1. Create DAG
+    # 1. CREATE DAG
     try:
         result = api_client.create_dag(dag_file)
     except Exception as e:
@@ -89,7 +113,7 @@ def run(
 
     console.print(f"[green]DAG created: {dag_id}[/green]")
 
-    # 2. Run DAG
+    # 2. RUN DAG
     try:
         run_info = api_client.run_dag(dag_id)
     except Exception as e:
@@ -103,24 +127,57 @@ def run(
 
     console.print(f"[green]Execution started: {execution_id}[/green]")
 
-    # 3A. DETACHED MODE → exit immediately
+    # -----------------------------------------------------------------------
+    # 3A — DETACHED MODE
+    # -----------------------------------------------------------------------
     if detach:
-        console.print("[yellow]Running in detached mode.[/yellow]")
-        console.print("Use 'maestro attach {dag_id}' to follow logs.")
+
+        console.print("[yellow]Running in detached mode.[/yellow]\n")
+
+        console.print("Available commands:")
+        console.print(f"  • maestro attach {dag_id} - Attach to live log stream")
+        console.print(f"  • maestro stop {dag_id} or Ctrl+C - Stop execution\n")
+
+        console.print("[dim]...running DAG...[/dim]\n")
+
+        # POLLING FINO A COMPLETAMENTO
+        while True:
+            try:
+                status = api_client.get_dag_status(dag_id, execution_id)
+                if status["status"] in ("completed", "failed", "cancelled"):
+                    break
+                time.sleep(1)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Detached (polling stopped).[/yellow]")
+                return
+            except Exception:
+                # se il server fosse temporaneamente non raggiungibile
+                time.sleep(1)
+
+        console.print(f"\n[green]DAG completed[/green]\n")
+
+        console.print("Available commands:")
+        console.print(f"  • maestro status {dag_id} - Check DAG status")
+        console.print(f"  • maestro log {dag_id} - View logs\n")
+
         return
 
-    # 3B. ATTACHED MODE → stream logs live
+    # -----------------------------------------------------------------------
+    # 3B — ATTACHED MODE
+    # -----------------------------------------------------------------------
+
     console.print(f"[bold cyan]Attaching to live logs...[/bold cyan]")
     console.print("[dim]Press Ctrl+C to detach[/dim]\n")
 
     try:
         for log_entry in api_client.stream_dag_logs_v1(dag_id, execution_id):
-            if "event" in log_entry and log_entry["event"] == "DAG_COMPLETED":
-                console.print("\n[green]DAG completed — detaching.[/green]")
-                return
+            # Evento di fine DAG
+            if log_entry.get("event") == "DAG_COMPLETED":
+                console.print("\n[green]DAG completed — detaching.[/green]\n")
+                break
 
             if "level" not in log_entry:
-                continue  # skip malformed entries
+                continue
 
             level = log_entry["level"]
             ts = log_entry["timestamp"].split("T")[1].split(".")[0]
@@ -134,10 +191,20 @@ def run(
                 "DEBUG": "blue",
             }.get(level, "white")
 
-            console.print(f"[dim]{ts}[/dim] [{style}]{level}[/]{style}] [magenta]{task}[/]: {msg}")
+            console.print(f"[dim]{ts}[/dim] [{style}]{level}[/] [magenta]{task}[/]: {msg}")
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Detached from log stream[/yellow]")
+        return
+
+    # 🔥 DOPO LO STREAMING → MOSTRA STATUS COMPLETO
+    console.print("[cyan]DAG final status:[/cyan]\n")
+
+    try:
+        status = api_client.get_dag_status(dag_id, execution_id)
+        _print_status_table(console, dag_id, execution_id, status)
+    except Exception as e:
+        console.print(f"[red]Unable to fetch DAG status: {e}[/red]")
 
 
 @app.command()

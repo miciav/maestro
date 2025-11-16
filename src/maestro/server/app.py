@@ -473,9 +473,36 @@ async def cleanup_old_executions(days: int = 30):
         logger.error(f"Failed to cleanup executions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 def start_server(host: str = "0.0.0.0", port: int = 8000, log_level: str = "info"):
     """Start the Maestro API server"""
+
+    import logging
+
+    class PollingFilter(logging.Filter):
+        """
+        Nasconde solo i GET /status del polling interno del client.
+        Tutti gli altri log HTTP restano visibili.
+        """
+        def filter(self, record):
+            msg = record.getMessage()
+
+            # es: "GET /v1/dags/foo/status?execution_id=XXXX HTTP/1.1" 200 OK
+            if "GET" in msg and "/v1/dags/" in msg and "/status" in msg:
+                return False  # → non loggare queste richieste
+
+            return True  # → logga tutto il resto
+
+    # Applica il filtro SOLO al logger di accesso HTTP uvicorn
+    logging.getLogger("uvicorn.access").addFilter(PollingFilter())
+
+    # Avvia il server normalmente
     uvicorn.run(app, host=host, port=port, log_level=log_level)
+
+
+# def start_server(host: str = "0.0.0.0", port: int = 8000, log_level: str = "info"):
+    """Start the Maestro API server"""
+   # uvicorn.run(app, host=host, port=port, log_level=log_level)
 
 def main():
     import argparse
