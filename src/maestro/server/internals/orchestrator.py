@@ -3,6 +3,7 @@ import uuid
 import threading
 from datetime import datetime
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, Future, as_completed
 from typing import Any, Type, Dict, Optional, Set, List
 
@@ -500,56 +501,107 @@ class Orchestrator:
         progress_tracker,
         db_handler
     ):
-        """Execute a single task asynchronously."""
+
+        """Execute a single task asynchronously WITH retry support."""
+
         task_id = task.task_id
 
+        print(
+            f"[DEBUG] task={task_id}, hasattr(retries)={hasattr(task, 'retries')}, "
+            f"raw_retries={getattr(task, 'retries', None)!r}, dict={task.__dict__}",
+            flush=True,
+        )
+
+        # Leggiamo i parametri di retry dal task, con fallback robusto
+        raw_retries = getattr(task, "retries", 0)
+        raw_retry_delay = getattr(task, "retry_delay", 0)
+
         try:
-            # Update status to running
-            task.status = TaskStatus.RUNNING
-            with self.status_manager as sm:
-                sm.set_task_status(dag_id, task_id, "running", execution_id)
+            max_retries = int(raw_retries or 0)
+        except (TypeError, ValueError):
+            max_retries = 0
 
-            if status_callback:
-                status_callback()
+        try:
+            retry_delay = int(raw_retry_delay or 0)
+        except (TypeError, ValueError):
+            retry_delay = 0
 
-            # Context per-THREAD per questo task
-            if db_handler:
-                db_handler.set_context(dag_id, execution_id, task_id)
+        # Log di debug per capire cosa vede l’orchestratore
+        self.logger.info(
+            f"Task {task_id}: configured retries={max_retries}, retry_delay={retry_delay}"
+        )
 
-            # (opzionale ma comodo) passa info alla Task
-            task.dag_id = dag_id
-            task.execution_id = execution_id
+        attempt = 0
 
-            # Execute the task
-            self.logger.info(f"Executing task: {task_id}")
-            executor_instance = self.executor_factory.get_executor(task.executor)
-            task.execute(executor_instance)
+        while True:
+            attempt += 1
 
-            # Update status to completed
-            task.status = TaskStatus.COMPLETED
-            with self.status_manager as sm:
-                sm.set_task_status(dag_id, task_id, "completed", execution_id)
+            try:
+                # Stato: running
+                task.status = TaskStatus.RUNNING
+                with self.status_manager as sm:
+                    sm.set_task_status(dag_id, task_id, "running", execution_id)
 
-            if progress_tracker:
-                progress_tracker.increment_completed()
-            if status_callback:
-                status_callback()
+                if status_callback:
+                    status_callback()
 
-        except Exception as e:
-            # Update status to failed
-            task.status = TaskStatus.FAILED
-            with self.status_manager as sm:
-                sm.set_task_status(dag_id, task_id, "failed", execution_id)
+                # Context per logging DB per questo thread/task
+                if db_handler:
+                    db_handler.set_context(dag_id, execution_id, task_id)
 
-            if status_callback:
-                status_callback()
+                # Passa info alla task (utile per PythonTask / BashTask)
+                task.dag_id = dag_id
+                task.execution_id = execution_id
 
-            # Re-raise the exception to be caught by the main loop
-            raise
-        finally:
-            # IMPORTANTISSIMO: svuota il contesto per il thread
-            if db_handler:
-                db_handler.clear_context()
+                # Log del tentativo
+                self.logger.info(
+                    f"Executing task: {task_id} (attempt {attempt}/{max_retries + 1})"
+                )
+
+                executor_instance = self.executor_factory.get_executor(task.executor)
+                task.execute(executor_instance)
+
+                # Se arrivo qui: successo
+                task.status = TaskStatus.COMPLETED
+                with self.status_manager as sm:
+                    sm.set_task_status(dag_id, task_id, "completed", execution_id)
+
+                if progress_tracker:
+                    progress_tracker.increment_completed()
+                if status_callback:
+                    status_callback()
+
+                return  # task completata con successo → si esce
+
+            except Exception as e:
+                # Fallimento del tentativo corrente
+                self.logger.error(f"Task {task_id} failed on attempt {attempt}: {e}")
+
+                task.status = TaskStatus.FAILED
+                with self.status_manager as sm:
+                    sm.set_task_status(dag_id, task_id, "failed", execution_id)
+
+                # Verifica se abbiamo ancora tentativi disponibili
+                if attempt <= max_retries:
+                    # Logga e attendi prima del retry
+                    self.logger.info(
+                        f"Retrying task {task_id} in {retry_delay} seconds "
+                        f"({attempt}/{max_retries})"
+                    )
+                    if retry_delay > 0:
+                        time.sleep(retry_delay)
+                    # e poi riparte il while True (nuovo tentativo)
+                    continue
+                else:
+                    # Nessun retry rimasto → fallimento definitivo
+                    if status_callback:
+                        status_callback()
+                    raise Exception(f"Task {task_id} failed: {e}") from e
+
+            finally:
+                # Pulizia del contesto di logging
+                if db_handler:
+                    db_handler.clear_context()
 
 
     def _handle_cancellation(

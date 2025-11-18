@@ -1,5 +1,6 @@
 from typing import Optional
 from pydantic import Field
+import traceback
 import io
 import contextlib
 import threading
