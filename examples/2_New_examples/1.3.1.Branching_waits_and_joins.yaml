@@ -6,7 +6,7 @@
 
 
 dag:
-  name: "difficult_branching_waits_and_joins"
+  name: "branching_waits_and_joins"
   tasks:
     - task_id: "start"
       type: "PrintTask"
@@ -18,28 +18,28 @@ dag:
       type: "PythonTask"
       params:
         code: |
-          import time; print("A1..."); time.sleep(20)
+          import time; print("Running A1..."); time.sleep(20); print("Task A1 completed.")
       dependencies: ["start"]
 
     - task_id: "A2"
       type: "PythonTask"
       params:
         code: |
-          import time; print("A2..."); time.sleep(25)
+          import time; print("Running A2..."); time.sleep(25); print("Task A2 completed.")
       dependencies: ["start"]
 
     - task_id: "B1"
       type: "PythonTask"
       params:
         code: |
-          import time; print("B1..."); time.sleep(30)
+          import time; print("Running B1..."); time.sleep(30); print("Task B1 completed.")
       dependencies: ["A1"]
 
     - task_id: "B2"
       type: "PythonTask"
       params:
         code: |
-          import time; print("B2..."); time.sleep(30)
+          import time; print("Running B2..."); time.sleep(30); print("Task B2 completed.")
       dependencies: ["A2"]
 
     - task_id: "combine"

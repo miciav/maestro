@@ -5,7 +5,7 @@
 # -------------------------------------------------------------------------------------
 
 dag:
-  name: "intermediate_parallel_then_join"
+  name: "parallel_then_join"
   tasks:
     - task_id: "start"
       type: "PrintTask"
@@ -20,6 +20,7 @@ dag:
           import time
           print("Worker A...")
           time.sleep(30)
+          print("Worker A - Task complete.")
       dependencies: ["start"]
 
     - task_id: "worker_b"
@@ -29,6 +30,7 @@ dag:
           import time
           print("Worker B...")
           time.sleep(40)
+          print("Worker B - Task complete.")
       dependencies: ["start"]
 
     - task_id: "worker_c"
@@ -38,6 +40,7 @@ dag:
           import time
           print("Worker C...")
           time.sleep(30)
+          print("Worker C - Task complete.")
       dependencies: ["start"]
 
     - task_id: "merge"

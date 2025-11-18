@@ -12,7 +12,7 @@ from maestro.server.internals.status_manager import StatusManager
 class PythonTask(BaseTask):
     """
     Executes inline Python code or a .py script.
-    Captures stdout/stderr (print statements) and writes them into logs table
+    Captures print() output and writes it into logs table
     with proper dag_id, execution_id, and formatted message.
     """
 
@@ -21,72 +21,62 @@ class PythonTask(BaseTask):
 
     def execute_local(self):
         """
-        Esegue il codice Python catturando stdout/stderr riga per riga
-        e scrivendolo DIRETTAMENTE nella tabella logs tramite StatusManager,
-        oltre che sul terminale del server.
+        Esegue il codice Python catturando le chiamate a print() e
+        scrivendole DIRETTAMENTE nella tabella logs tramite StatusManager,
+        senza toccare sys.stdout/sys.stderr globali (thread-safe).
         """
-
         sm = StatusManager.get_instance()
 
-        dag_id = getattr(self, "dag_id", None)
-        execution_id = getattr(self, "execution_id", None)
+        dag_id = getattr(self, "dag_id", None) or "unknown_dag"
+        execution_id = getattr(self, "execution_id", None) or "unknown_execution"
         task_id = self.task_id
 
-        # Se per qualche motivo non abbiamo contesto, evitiamo di rompere tutto
-        if not dag_id or not execution_id:
-            dag_id = dag_id or "unknown_dag"
-            execution_id = execution_id or "unknown_execution"
+        # useremo la print "vera" solo per la console server
+        real_print = print
 
-        original_stdout = sys.stdout
-        original_stderr = sys.stderr
+        def _log_line(level: str, text: str):
+            # stampa su console server
+            real_print(text, flush=True)
+            # e registra nel DB
+            sm.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=text,
+                level=level
+            )
 
-        class _LogStream(io.TextIOBase):
-            def __init__(self, orig_stream, level: str):
-                self._orig = orig_stream
-                self._buffer = ""
-                self._level = level
-                self._lock = threading.Lock()
+        def task_print(*args, **kwargs):
+            sep = kwargs.get("sep", " ")
+            end = kwargs.get("end", "\n")
+            s = sep.join(str(a) for a in args) + end
 
-            def write(self, s: str) -> int:
-                # Scrivi comunque sul terminale del server
-                self._orig.write(s)
-                self._orig.flush()
+            # spezza su newline per loggare riga per riga
+            for line in s.splitlines():
+                clean = line.rstrip("\r")
+                if clean.strip():
+                    _log_line("INFO", f"[PythonTask] {clean}")
 
-                # Accumula nel buffer e spezza per newline
-                with self._lock:
-                    self._buffer += s
-                    while "\n" in self._buffer:
-                        line, self._buffer = self._buffer.split("\n", 1)
-                        clean = line.rstrip("\r")
-                        if clean.strip():
-                            # Scrivi nel DB, una riga = un log
-                            sm.add_log(
-                                dag_id=dag_id,
-                                execution_id=execution_id,
-                                task_id=task_id,
-                                message=f"[PythonTask] {clean}",
-                                level=self._level
-                            )
-                return len(s)
-
-            def flush(self) -> None:
-                self._orig.flush()
-
-        stdout_stream = _LogStream(original_stdout, level="INFO")
-        stderr_stream = _LogStream(original_stderr, level="ERROR")
+        # Ambiente di esecuzione: print viene shadowata
+        env = {
+            "__name__": "__main__",
+            "print": task_print,
+        }
 
         try:
-            with contextlib.redirect_stdout(stdout_stream), contextlib.redirect_stderr(stderr_stream):
-                if self.code:
-                    exec(self.code, {})
-                elif self.script_path:
-                    with open(self.script_path, "r") as f:
-                        code = f.read()
-                    exec(code, {})
-                else:
-                    raise ValueError("PythonTask requires either 'code' or 'script_path'.")
-        finally:
-            # Ripristina gli stream originali
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-
+            if self.code:
+                exec(self.code, env)
+            elif self.script_path:
+                with open(self.script_path, "r") as f:
+                    code = f.read()
+                exec(code, env)
+            else:
+                raise ValueError("PythonTask requires either 'code' or 'script_path'.")
+        except Exception:
+            # logga l'eccezione nel DB
+            tb = traceback.format_exc()
+            for line in tb.splitlines():
+                if line.strip():
+                    _log_line("ERROR", f"[PythonTask][exception] {line}")
+            # rialza per far fallire il task
+            raise

@@ -5,7 +5,7 @@
 # -------------------------------------------------------------------------------------
 
 dag:
-  name: "difficult_cascade_retry_delays"
+  name: "cascade_retry_delays"
   tasks:
     - task_id: "start"
       type: "PrintTask"
@@ -19,8 +19,11 @@ dag:
         code: |
           import time, random
           print("Unstable step (may fail)...")
-          time.sleep(15)
-          if random.random() < 0.5:
+          # time.sleep(15)
+          generate_random = random.random()
+          print(f"Generated: {round(generate_random, 2)}")
+          if generate_random < 0.67:
+              print("Failure occurred")
               raise Exception("Simulated failure!")
           print("Unstable succeeded")
       retries: 3
@@ -33,7 +36,7 @@ dag:
         code: |
           import time
           print("Slow processing...")
-          time.sleep(30)
+          # time.sleep(30)
       dependencies: ["unstable_step"]
 
     - task_id: "finish"

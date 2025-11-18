@@ -5,7 +5,7 @@
 # -------------------------------------------------------------------------------------
 
 dag:
-  name: "intermediate_long_waits"
+  name: "long_waits"
   tasks:
     - task_id: "start"
       type: "PrintTask"

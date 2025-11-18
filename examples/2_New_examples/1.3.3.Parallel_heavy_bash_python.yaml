@@ -5,7 +5,7 @@
 # -------------------------------------------------------------------------------------
 
 dag:
-  name: "difficult_parallel_heavy_bash_python"
+  name: "parallel_heavy_bash_python"
   tasks:
     - task_id: "start"
       type: "PrintTask"
@@ -19,6 +19,7 @@ dag:
         command: |
           echo "Bash running long task..."
           sleep 45
+          echo "Bash task completed."
       dependencies: ["start"]
 
     - task_id: "python_long"
@@ -26,8 +27,9 @@ dag:
       params:
         code: |
           import time
-          print("Python long task...")
+          print("Python running long task...")
           time.sleep(50)
+          print("Python task completed.")
       dependencies: ["start"]
 
     - task_id: "final_merge"

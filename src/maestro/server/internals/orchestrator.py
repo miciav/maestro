@@ -1,6 +1,8 @@
 import logging
 import uuid
 import threading
+from datetime import datetime
+import re
 from concurrent.futures import ThreadPoolExecutor, Future, as_completed
 from typing import Any, Type, Dict, Optional, Set, List
 
@@ -20,42 +22,68 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 
 class DatabaseLogHandler(logging.Handler):
-    """Custom logging handler that writes to StatusManager database."""
+    """Thread-safe logging handler that writes task logs to StatusManager."""
+
+    _ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
 
     def __init__(self, status_manager: StatusManager):
         super().__init__()
         self.status_manager = status_manager
-        self.current_dag_id = None
-        self.current_execution_id = None
-        self.current_task_id = None
 
+        # Thread-local context instead of global instance attributes
+        self._ctx = threading.local()
+
+    # -------------------------------
+    # CONTEXT HANDLING (THREAD-SAFE)
+    # -------------------------------
     def set_context(self, dag_id: str, execution_id: str, task_id: str = None):
-        """Set the current execution context for logging."""
-        self.current_dag_id = dag_id
-        self.current_execution_id = execution_id
-        self.current_task_id = task_id
+        """Assigns context to the current thread only."""
+        self._ctx.dag_id = dag_id
+        self._ctx.execution_id = execution_id
+        self._ctx.task_id = task_id
 
+    def clear_context(self):
+        """Clears thread context after task finishes."""
+        self._ctx.dag_id = None
+        self._ctx.execution_id = None
+        self._ctx.task_id = None
+
+    # -------------------------------
+    # LOG EMISSION
+    # -------------------------------
     def emit(self, record):
-        """Emit a log record to the database, preserving the real timestamp."""
-        if self.current_dag_id and self.current_execution_id:
-            try:
-                # Timestamp reale del LogRecord
-                log_timestamp = datetime.fromtimestamp(record.created)
+        """Store logs in the database, per-thread context."""
+        dag_id = getattr(self._ctx, "dag_id", None)
+        execution_id = getattr(self._ctx, "execution_id", None)
+        task_id = getattr(self._ctx, "task_id", None)
 
-                # Messaggio grezzo (senza metadata RichHandler)
-                log_message = record.getMessage()
+        # If we have no per-thread context: ignore this log
+        if not dag_id or not execution_id:
+            return
 
-                with self.status_manager as sm:
-                    sm.log_message(
-                        dag_id=self.current_dag_id,
-                        execution_id=self.current_execution_id,
-                        task_id=self.current_task_id or "system",
-                        level=record.levelname,
-                        message=log_message,
-                        timestamp=log_timestamp
-                    )
-            except Exception:
-                pass  # Non deve mai rompere l'esecuzione
+        try:
+            # Extract real timestamp
+            timestamp = datetime.fromtimestamp(record.created)
+
+            # Raw message
+            msg = record.getMessage()
+
+            # Remove ANSI escape sequences (Rich formatting)
+            msg = self._ansi_escape.sub("", msg)
+
+            with self.status_manager as sm:
+                sm.log_message(
+                    dag_id=dag_id,
+                    execution_id=execution_id,
+                    task_id=task_id or "system",
+                    level=record.levelname,
+                    message=msg,
+                    timestamp=timestamp
+                )
+
+        except Exception:
+            # Log errors should NEVER break execution
+            pass
 
 
 class Orchestrator:
@@ -86,10 +114,10 @@ class Orchestrator:
         self._execution_stop_events: Dict[str, threading.Event] = {}
         self.task_executor = ThreadPoolExecutor(max_workers=10)
 
-    def _setup_logging(self, log_level: str):
-        """Setup global logging with RichHandler (console) and DatabaseLogHandler (persistent)."""
 
-        # Pulisci logging root
+    def _setup_logging(self, log_level: str):
+        """Setup global logging with RichHandler (console) and prepare DB handler."""
+
         logging.shutdown()
         for h in logging.root.handlers[:]:
             logging.root.removeHandler(h)
@@ -97,31 +125,24 @@ class Orchestrator:
         level = getattr(logging, log_level.upper(), logging.INFO)
         logging.root.setLevel(level)
 
-        # Console
+        # Console: solo RichHandler sul root
         rich_handler = RichHandler(console=self.console, rich_tracebacks=True)
         rich_handler.setLevel(level)
 
-        # DB
+        root_logger = logging.getLogger()
+        root_logger.addHandler(rich_handler)
+        logging.captureWarnings(True)
+        root_logger.propagate = False
+
+        # Logger dell’orchestratore (non propaga al root)
+        self.logger = logging.getLogger("maestro.orchestrator")
+        self.logger.setLevel(level)
+        self.logger.propagate = False
+
+        # DB handler creato ma NON agganciato al root
         self.db_handler = DatabaseLogHandler(self.status_manager)
         self.db_handler.setLevel(logging.DEBUG)
 
-        root_logger = logging.getLogger()
-        root_logger.addHandler(rich_handler)
-        root_logger.addHandler(self.db_handler)
-        logging.captureWarnings(True)
-        root_logger.propagate = True
-
-        # Logger dell’orchestratore
-        self.logger = logging.getLogger("maestro.orchestrator")
-        self.logger.setLevel(level)
-        self.logger.propagate = True
-
-        # 🔧 AGGANCIA il DB handler anche a tutti i logger di maestro già creati
-        for name in list(logging.root.manager.loggerDict.keys()):
-            if name.startswith("maestro."):
-                lg = logging.getLogger(name)
-                lg.addHandler(self.db_handler)
-                lg.propagate = True
 
     def register_task_type(self, name: str, task_class: Type[BaseTask]):
         """Register a custom task type."""
@@ -186,13 +207,13 @@ class Orchestrator:
         # Use provided execution_id or generate a new one
         if execution_id is None:
             execution_id = str(uuid.uuid4())
-        
+
         dag.execution_id = execution_id
-        
+
         # Create a stop event for this execution
         stop_event = threading.Event()
         self._execution_stop_events[execution_id] = stop_event
-        
+
         # Create or update execution record in database synchronously
         with self.status_manager as sm:
             # Check if execution already exists (e.g., with 'created' status)
@@ -277,10 +298,10 @@ class Orchestrator:
 
         # Set up database logging if execution_id is provided
         db_handler = None
+        task_loggers = []
 
         if execution_id:
-            db_handler = DatabaseLogHandler(self.status_manager)
-            db_handler.set_context(dag_id, execution_id)
+            db_handler = self.db_handler
 
             task_loggers = [
                 'maestro.server.tasks.terraform_task',
@@ -322,12 +343,15 @@ class Orchestrator:
                 stop_event=stop_event,
                 db_handler=db_handler
             )
+
         finally:
             # Clean up database handler
             if db_handler:
                 for logger_name in task_loggers:
                     logger = logging.getLogger(logger_name)
-                    logger.removeHandler(db_handler)
+                    if db_handler in logger.handlers:
+                        logger.removeHandler(db_handler)
+
 
     def _run_dag_concurrent(
         self,
@@ -342,14 +366,14 @@ class Orchestrator:
     ):
         """Execute DAG tasks concurrently based on dependencies."""
         dag_id = dag.dag_id
-        
+
         # Initialize task tracking sets
         pending_tasks: Set[str] = set(dag.tasks.keys())
         running_tasks: Dict[str, Future] = {}
         completed_tasks: Set[str] = set()
         failed_tasks: Set[str] = set()
         skipped_tasks: Set[str] = set()
-        
+
         with self.status_manager as sm:
             # Handle resume - mark already completed tasks
             if resume:
@@ -364,7 +388,7 @@ class Orchestrator:
                             progress_tracker.increment_completed()
                         if status_callback:
                             status_callback()
-            
+
             # Main execution loop
             while pending_tasks or running_tasks:
                 # Check for cancellation
@@ -374,14 +398,14 @@ class Orchestrator:
                         dag, execution_id, pending_tasks, running_tasks, sm, status_callback
                     )
                     break
-                
+
                 # Check for completed tasks
                 if running_tasks:
                     completed_futures = []
                     for task_id, future in list(running_tasks.items()):
                         if future.done():
                             completed_futures.append((task_id, future))
-                    
+
                     for task_id, future in completed_futures:
                         del running_tasks[task_id]
                         try:
@@ -395,16 +419,16 @@ class Orchestrator:
                                 # Cancel all running tasks and stop
                                 self._cancel_running_tasks(running_tasks)
                                 raise Exception(f"Task {task_id} failed: {e}")
-                
+
                 # Find tasks ready to run
                 ready_tasks = self._find_ready_tasks(
                     dag, pending_tasks, completed_tasks, failed_tasks, skipped_tasks
                 )
-                
+
                 # Submit ready tasks for execution
                 for task_id in ready_tasks:
                     task = dag.tasks[task_id]
-                    
+
                     # Check if dependencies failed
                     if self._has_failed_dependencies(task, failed_tasks, skipped_tasks):
                         self.logger.warning(f"Skipping task {task_id} because its dependencies failed")
@@ -415,7 +439,7 @@ class Orchestrator:
                         if status_callback:
                             status_callback()
                         continue
-                    
+
                     # Submit task for execution
                     self.logger.info(f"Submitting task {task_id} for execution")
                     future = self.task_executor.submit(
@@ -429,7 +453,7 @@ class Orchestrator:
                     )
                     running_tasks[task_id] = future
                     pending_tasks.remove(task_id)
-                
+
                 # Brief sleep to prevent busy waiting
                 if not ready_tasks and running_tasks:
                     threading.Event().wait(0.1)
@@ -444,14 +468,14 @@ class Orchestrator:
     ) -> List[str]:
         """Find tasks that are ready to run (all dependencies completed)."""
         ready_tasks = []
-        
+
         for task_id in pending_tasks:
             task = dag.tasks[task_id]
-            
+
             # Check if all dependencies are completed
             if all(dep in completed_tasks for dep in task.dependencies):
                 ready_tasks.append(task_id)
-        
+
         return ready_tasks
 
     def _has_failed_dependencies(
@@ -466,6 +490,7 @@ class Orchestrator:
             for dep in task.dependencies
         )
 
+
     def _execute_task_async(
         self,
         task,
@@ -477,21 +502,21 @@ class Orchestrator:
     ):
         """Execute a single task asynchronously."""
         task_id = task.task_id
-        
+
         try:
             # Update status to running
             task.status = TaskStatus.RUNNING
             with self.status_manager as sm:
                 sm.set_task_status(dag_id, task_id, "running", execution_id)
-            
+
             if status_callback:
                 status_callback()
-            
-            # Update database handler context for this task
+
+            # Context per-THREAD per questo task
             if db_handler:
                 db_handler.set_context(dag_id, execution_id, task_id)
-            
-            # 🆕 Passa il contesto alla task (serve per i log)
+
+            # (opzionale ma comodo) passa info alla Task
             task.dag_id = dag_id
             task.execution_id = execution_id
 
@@ -499,28 +524,33 @@ class Orchestrator:
             self.logger.info(f"Executing task: {task_id}")
             executor_instance = self.executor_factory.get_executor(task.executor)
             task.execute(executor_instance)
-            
+
             # Update status to completed
             task.status = TaskStatus.COMPLETED
             with self.status_manager as sm:
                 sm.set_task_status(dag_id, task_id, "completed", execution_id)
-            
+
             if progress_tracker:
                 progress_tracker.increment_completed()
             if status_callback:
                 status_callback()
-                
+
         except Exception as e:
             # Update status to failed
             task.status = TaskStatus.FAILED
             with self.status_manager as sm:
                 sm.set_task_status(dag_id, task_id, "failed", execution_id)
-            
+
             if status_callback:
                 status_callback()
-            
+
             # Re-raise the exception to be caught by the main loop
             raise
+        finally:
+            # IMPORTANTISSIMO: svuota il contesto per il thread
+            if db_handler:
+                db_handler.clear_context()
+
 
     def _handle_cancellation(
         self,
@@ -534,16 +564,16 @@ class Orchestrator:
         """Handle DAG cancellation."""
         # Cancel all running tasks
         self._cancel_running_tasks(running_tasks)
-        
+
         # Mark DAG as cancelled
         sm.update_dag_execution_status(dag.dag_id, execution_id, "cancelled")
-        
+
         # Mark pending tasks as skipped
         for task_id in pending_tasks:
             task = dag.tasks[task_id]
             task.status = TaskStatus.SKIPPED
             sm.set_task_status(dag.dag_id, task_id, "skipped", execution_id)
-        
+
         if status_callback:
             status_callback()
 
@@ -609,7 +639,7 @@ class Orchestrator:
             "summary": summary,
             "total_tasks": len(dag.tasks)
         }
-    
+
     def cancel_dag_execution(self, dag_id: str, execution_id: str = None) -> bool:
         """Cancel a running DAG execution by setting its stop event."""
         with self.status_manager as sm:
@@ -620,31 +650,31 @@ class Orchestrator:
                     if exec_info["dag_id"] == dag_id:
                         execution_id = exec_info["execution_id"]
                         break
-            
+
             if execution_id and execution_id in self._execution_stop_events:
                 # Set the stop event to signal the thread to stop
                 self._execution_stop_events[execution_id].set()
                 # Update the database status
                 sm.cancel_dag_execution(dag_id, execution_id)
                 return True
-            
+
             return False
-    
+
     def stop_all_running_dags(self) -> int:
         """Stop all currently running DAGs. Returns the number of DAGs stopped."""
         stopped_count = 0
-        
+
         with self.status_manager as sm:
             running_dags = sm.get_running_dags()
-            
+
             for dag_info in running_dags:
                 dag_id = dag_info["dag_id"]
                 execution_id = dag_info["execution_id"]
-                
+
                 if self.cancel_dag_execution(dag_id, execution_id):
                     stopped_count += 1
                     self.logger.info(f"Stopped DAG {dag_id} (execution: {execution_id})")
                 else:
                     self.logger.warning(f"Failed to stop DAG {dag_id} (execution: {execution_id})")
-        
+
         return stopped_count
