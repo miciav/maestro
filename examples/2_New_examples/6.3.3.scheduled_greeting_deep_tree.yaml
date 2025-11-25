@@ -1,8 +1,6 @@
 abstract: |
   This DAG represents the most complex variant of the scheduled greeting series.
-  Instead of a wide multi-branch structure, this version stresses the orchestrator
-  through a *deep linear pipeline* of many sequential tasks that mix Bash, Python,
-  and Print operations.
+  Instead of a wide multi-branch structure, this version stresses the orchestrator through a *deep linear pipeline* of many sequential tasks that mix Bash, Python, and Print operations.
 
   After starting at the specified start_time, the DAG performs:
     - Several low-level checks (environment, directory, process snapshot)
@@ -60,7 +58,7 @@ dag:
     - task_id: "t5_generate_numbers"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           nums = list(range(1, 11))
           print("Generated numbers:", nums)
       dependencies: ["t4_process_snapshot"]
@@ -68,7 +66,7 @@ dag:
     - task_id: "t6_square_numbers"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           nums = list(range(1, 11))
           squares = [n*n for n in nums]
           print("Square numbers:", squares)
@@ -77,7 +75,7 @@ dag:
     - task_id: "t7_sum_squares"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           nums = list(range(1, 11))
           squares = [n*n for n in nums]
           print("Sum of squares:", sum(squares))
@@ -104,7 +102,7 @@ dag:
     - task_id: "t10_python_summary"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Final Python summary OK.")
       dependencies: ["t9_fake_compress"]
 

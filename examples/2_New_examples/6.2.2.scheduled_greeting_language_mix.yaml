@@ -1,7 +1,5 @@
 abstract: |
-  This DAG expands the basic scheduled greeting example by introducing
-  a multilingual greeting flow executed immediately after the scheduled
-  start_time is reached.
+  This DAG expands the basic scheduled greeting example by introducing a multilingual greeting flow executed immediately after the scheduled start_time is reached.
 
   The pipeline performs:
     - A starting PrintTask announcing the scheduled execution
@@ -37,7 +35,7 @@ dag:
     - task_id: "choose_language"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random
           lang = random.choice(["EN", "IT", "ES"])
           print(f"Selected language: {lang}")

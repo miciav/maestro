@@ -34,7 +34,7 @@ dag:
     - task_id: "generate_data"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json
           data = {"values": [3, 5, 8, 13, 21]}
           with open("numbers.json", "w") as f:
@@ -65,7 +65,7 @@ dag:
     - task_id: "python_compute_sum"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json
           with open("numbers.json") as f:
             data = json.load(f)

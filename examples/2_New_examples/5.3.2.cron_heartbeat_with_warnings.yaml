@@ -6,17 +6,17 @@ dag:
   cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
 
   tasks:
-    # ROOT: decide un livello di "criticità" fittizio
+    # ROOT: set a critical (fake) threshold
     - task_id: "evaluate_status"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random
           status = random.choice(["OK", "WARNING"])
           print(f"Evaluated heartbeat status: {status}")
       dependencies: []
 
-    # RAMO OK: controlli leggeri
+    # OK branch
     - task_id: "ok_branch_info"
       type: "BashTask"
       params:
@@ -29,11 +29,11 @@ dag:
         message: "OK branch completed."
       dependencies: ["ok_branch_info"]
 
-    # RAMO WARNING: logga qualcosa in più
+    # WARNING branch
     - task_id: "warning_branch_detail"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("WARNING branch: capturing extra diagnostic info (simulated).")
       dependencies: ["evaluate_status"]
 
@@ -43,7 +43,7 @@ dag:
         command: "echo \"$(date) - WARNING: simulated condition\" >> /tmp/maestro_heartbeat_warn.log"
       dependencies: ["warning_branch_detail"]
 
-    # MERGE: sempre eseguito dopo entrambi i rami
+    # Final marge
     - task_id: "heartbeat_summary"
       type: "PrintTask"
       params:

@@ -1,7 +1,6 @@
 abstract: |
   This DAG is a difficult-level extension of the scheduled greeting concept.
-  It introduces a warning-style execution flow where some tasks can emit
-  notices about potential system issues without failing the pipeline.
+  It introduces a warning-style execution flow where some tasks can emit notices about potential system issues without failing the pipeline.
 
   After being triggered at the scheduled start_time, the DAG:
     - Runs standard initialization
@@ -9,8 +8,7 @@ abstract: |
         * Disk capacity early-warning (Bash)
         * Memory usage early-warning (Bash)
         * Python environment sanity-check (Python)
-    - Each branch includes a task that might produce a “warning” message
-      (but never fails the DAG)
+    - Each branch includes a task that might produce a “warning” message (but never fails the DAG)
     - Merges the three warning lines into a final scheduled greeting
 
   This structure tests:
@@ -46,7 +44,7 @@ dag:
     - task_id: "disk_warning"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           # This is not a real fail: it's a warning generator
           print('WARNING: Disk free space could be evaluated as low (simulated).')
       dependencies: ["disk_free"]
@@ -63,7 +61,7 @@ dag:
     - task_id: "mem_warning"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print('WARNING: Memory usage seems elevated (simulated).')
       dependencies: ["mem_usage"]
 
@@ -73,7 +71,7 @@ dag:
     - task_id: "py_info"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import platform
           print('Python interpreter:', platform.python_version())
       dependencies: ["start"]
@@ -81,7 +79,7 @@ dag:
     - task_id: "py_warning"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print('WARNING: Python environment missing optional modules (simulated).')
       dependencies: ["py_info"]
 

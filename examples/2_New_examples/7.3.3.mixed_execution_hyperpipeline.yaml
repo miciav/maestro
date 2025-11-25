@@ -39,7 +39,7 @@ dag:
     - task_id: "generate_data"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json, random
           data = {"values": [random.randint(1, 500) for _ in range(30)]}
           with open("hyper_data.json", "w") as f:
@@ -69,13 +69,13 @@ dag:
     - task_id: "B1_load_and_double"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json
           with open("hyper_data.json") as f:
             data = json.load(f)
           doubled = [v*2 for v in data["values"]]
           with open("B_doubled.txt", "w") as out:
-            out.write("\\n".join(map(str, doubled)))
+            out.write("\n".join(map(str, doubled)))
           print("Branch B doubled data.")
       dependencies: ["generate_data"]
 
@@ -89,7 +89,7 @@ dag:
     - task_id: "C1_compute_stats"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json
           with open("hyper_data.json") as f:
             data = json.load(f)
@@ -114,13 +114,13 @@ dag:
     - task_id: "D1_extract_even"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json
           with open("hyper_data.json") as f:
             data = json.load(f)
           evens = [v for v in data["values"] if v % 2 == 0]
           with open("D_evens.txt", "w") as out:
-            out.write("\\n".join(map(str, evens)))
+            out.write("\n".join(map(str, evens)))
           print("Branch D extracted even numbers.")
       dependencies: ["generate_data"]
 
@@ -155,7 +155,7 @@ dag:
     - task_id: "S2_summary_python"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print('Second-stage summary: Python confirming prior merges completed.')
       dependencies: ["merge_primary"]
 

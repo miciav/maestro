@@ -3,24 +3,24 @@ abstract: |
 
 dag:
   name: "cron_heartbeat_extended"
-  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+  cron_schedule: "*/10 * * * *"  # Each 10 minutes
 
   tasks:
-    # 1) Messaggio iniziale, così vedi che il job è partito
+    # 1) Initial message to check the start
     - task_id: "heartbeat_start"
       type: "PrintTask"
       params:
         message: "Heartbeat: Maestro cron job triggered."
       dependencies: []
 
-    # 2) Piccolo check di sistema: stampa data/ora e directory corrente
+    # 2) System check
     - task_id: "bash_info"
       type: "BashTask"
       params:
-        command: "echo 'Time:' $(date) && echo 'PWD:' $(pwd)"
+        command: "echo 'Time:' $(date); echo 'PWD:' $(pwd)"
       dependencies: ["heartbeat_start"]
 
-    # 3) Messaggio finale di conferma
+    # 3) Final message
     - task_id: "heartbeat_end"
       type: "PrintTask"
       params:

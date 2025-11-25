@@ -32,13 +32,13 @@ dag:
         code: |
           import random, sys, time
 
-          # Genera un numero casuale tra 0 e 1
+          # generate a random number between 0 and 1
           generate_random = random.random()
           print(f"Unstable Python Task - Generated: {round(generate_random, 2)}")
 
-          # Usa una soglia di 0.4 per decidere se fallire oppure no
+          # Use the threshold of 40%
           if random.random() < 0.4:
-              # Fallimento esplicito: il processo termina con errore
+              # Explicit failyure - exit with error status 1
               sys.exit("Python failed")
           else:
               # Caso di successo

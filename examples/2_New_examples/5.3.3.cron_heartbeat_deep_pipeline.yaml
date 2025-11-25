@@ -23,15 +23,15 @@ dag:
     - task_id: "sys_python_analysis"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("System analysis (simulated).")
       dependencies: ["sys_info"]
 
-    # ===== BRANCH APPLICATION (simulato) =====
+    # ===== BRANCH APPLICATION (simulated) =====
     - task_id: "app_status"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("App status: simulated check OK.")
       dependencies: ["heartbeat_root"]
 
@@ -44,26 +44,26 @@ dag:
     - task_id: "app_python_summary"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Application summary (simulated).")
       dependencies: ["app_logs_tail"]
 
-    # MERGE: quando entrambe le pipeline (system + app) sono complete
+    # Final merge of all branches
     - task_id: "merge_health"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Merging system and application health (simulated). Overall OK.")
       dependencies: ["sys_python_analysis", "app_python_summary"]
 
-    # LOG SU FILE
+    # LOG ON FILE
     - task_id: "write_heartbeat_log"
       type: "BashTask"
       params:
         command: "echo \"$(date) - Deep heartbeat completed\" >> /tmp/maestro_deep_heartbeat.log"
       dependencies: ["merge_health"]
 
-    # FINALE
+    # FINAL MESSAGE
     - task_id: "heartbeat_done"
       type: "PrintTask"
       params:

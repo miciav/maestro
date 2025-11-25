@@ -8,7 +8,7 @@ dag:
     - task_id: "t1"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
           if random.random() < .4: sys.exit(1)
           print("t1 OK")
@@ -22,19 +22,19 @@ dag:
         command: |
           if [ $((RANDOM % 4)) -eq 0 ]; then exit 1; fi
           echo "t2 OK"
-      retries: 3
-      retry_delay: 2
+      retries: 1
+      retry_delay: 5
       dependencies: ["t1"]
 
     - task_id: "t3"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
           if random.random() < .5: sys.exit(1)
           print("t3 OK")
       retries: 2
-      retry_delay: 1
+      retry_delay: 2
       dependencies: ["t2"]
 
     - task_id: "t4"
@@ -43,7 +43,7 @@ dag:
         command: |
           if [ $((RANDOM % 3)) -eq 0 ]; then exit 1; fi
           echo "t4 OK"
-      retries: 4
+      retries: 6
       retry_delay: 1
       dependencies: ["t3"]
 

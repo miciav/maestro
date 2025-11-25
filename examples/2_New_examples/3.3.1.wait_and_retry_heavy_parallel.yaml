@@ -15,7 +15,7 @@ dag:
     - task_id: "unstable_1"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
           if random.random() < .5: sys.exit(1)
           print("Unstable 1 OK")
@@ -29,14 +29,14 @@ dag:
         command: |
           if [ $((RANDOM % 2)) -eq 0 ]; then exit 1; fi
           echo "Unstable 2 OK"
-      retries: 3
+      retries: 4
       retry_delay: 2
       dependencies: ["start"]
 
     - task_id: "unstable_3"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
           if random.random() < .7: sys.exit(1)
           print("Unstable 3 OK")
@@ -50,8 +50,8 @@ dag:
         command: |
           if [ $((RANDOM % 3)) -eq 0 ]; then exit 1; fi
           echo "Unstable 4 OK"
-      retries: 2
-      retry_delay: 3
+      retries: 6
+      retry_delay: 0
       dependencies: ["start"]
 
     # Merging finale

@@ -1,7 +1,5 @@
 abstract: |
-  This DAG represents a high-complexity scheduled pipeline that performs a
-  multi-branch system healthcheck immediately after being triggered at the
-  specified start_time.
+  This DAG represents a high-complexity scheduled pipeline that performs a multi-branch system healthcheck immediately after being triggered at the specified start_time.
 
   It performs:
     - A scheduled initialization message
@@ -67,7 +65,7 @@ dag:
     - task_id: "python_version"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import platform
           print('Python version:', platform.python_version())
       dependencies: ["start"]
@@ -75,7 +73,7 @@ dag:
     - task_id: "python_math_check"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import math
           print('Sanity check: sqrt(256) =', math.sqrt(256))
       dependencies: ["python_version"]

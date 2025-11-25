@@ -9,9 +9,11 @@ dag:
     - task_id: "root"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
-          if random.random() < .5: sys.exit(1)
+          if random.random() < .5:
+              print("Root failed")
+              sys.exit(1)
           print("Root OK")
       retries: 3
       retry_delay: 2
@@ -21,7 +23,7 @@ dag:
     - task_id: "a1"
       type: "BashTask"
       params:
-        command: "if [ $((RANDOM % 2)) -eq 0 ]; then exit 1; fi; echo A1"
+        command: "if [ $((RANDOM % 2)) -eq 0 ]; then echo 'Failed A1'; exit 1; fi; echo A1 OK"
       retries: 2
       retry_delay: 1
       dependencies: ["root"]
@@ -29,9 +31,11 @@ dag:
     - task_id: "a2"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
-          if random.random() < .4: sys.exit(1)
+          if random.random() < .4:
+              print("Failed A2")
+              sys.exit(1)
           print("A2 OK")
       retries: 3
       retry_delay: 1
@@ -41,9 +45,11 @@ dag:
     - task_id: "b1"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
-          if random.random() < .6: sys.exit(1)
+          if random.random() < .6:
+              print("Failed B1")
+              sys.exit(1)
           print("B1 OK")
       retries: 4
       retry_delay: 1
@@ -52,7 +58,7 @@ dag:
     - task_id: "b2"
       type: "BashTask"
       params:
-        command: "if [ $((RANDOM % 3)) -eq 0 ]; then exit 1; fi; echo B2"
+        command: "if [ $((RANDOM % 3)) -eq 0 ]; then echo 'Failed B2'; exit 1; fi; echo B2 OK"
       retries: 2
       retry_delay: 2
       dependencies: ["b1"]
@@ -61,7 +67,7 @@ dag:
     - task_id: "c1"
       type: "BashTask"
       params:
-        command: "if [ $((RANDOM % 2)) -eq 0 ]; then exit 1; fi; echo C1"
+        command: "if [ $((RANDOM % 2)) -eq 0 ]; then echo 'Failed C1'; exit 1; fi; echo C1 OK"
       retries: 3
       retry_delay: 1
       dependencies: ["root"]
@@ -69,9 +75,11 @@ dag:
     - task_id: "c2"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
-          if random.random() < .5: sys.exit(1)
+          if random.random() < .5:
+              print("Failed C2")
+              sys.exit(1)
           print("C2 OK")
       retries: 3
       retry_delay: 1
@@ -88,9 +96,11 @@ dag:
     - task_id: "final_unstable"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
-          if random.random() < .4: sys.exit(1)
+          if random.random() < .4:
+              print("Final task failed")
+              sys.exit(1)
           print("Final task OK")
       retries: 3
       retry_delay: 2

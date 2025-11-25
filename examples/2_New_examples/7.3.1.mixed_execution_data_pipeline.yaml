@@ -36,7 +36,7 @@ dag:
     - task_id: "generate_dataset"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json, random
           values = [random.randint(10, 999) for _ in range(50)]
           with open("dataset.json", "w") as f:
@@ -69,7 +69,7 @@ dag:
     - task_id: "compute_stats"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           with open("digits_grouped.txt") as f:
             content = f.read().strip()
           if not content:
@@ -103,7 +103,7 @@ dag:
     - task_id: "branch_b_split"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           with open("digits_grouped.txt") as f:
             data = f.read().strip()
           chunks = [data[i:i+5] for i in range(0, len(data), 5)]

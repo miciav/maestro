@@ -5,35 +5,36 @@ dag:
   name: "wait_and_retry_branching"
   tasks:
 
-    # Primo task instabile (radice)
+    # First unstable task (root)
     - task_id: "unstable_root"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
           if random.random() < 0.5:
               sys.exit(1)
-          print("Root succeeded!")
+          else:
+            print("Root succeeded!")
       retries: 3
       retry_delay: 2
       dependencies: []
 
-    # Ramo 1
+    # Branch 1
     - task_id: "branch_a"
       type: "BashTask"
       params:
         command: |
           if [ $((RANDOM % 2)) -eq 0 ]; then exit 1; fi
           echo "Branch A OK"
-      retries: 2
+      retries: 3
       retry_delay: 1
       dependencies: ["unstable_root"]
 
-    # Ramo 2
+    # Branch 2
     - task_id: "branch_b"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random, sys
           if random.random() < 0.3:
               sys.exit(1)
@@ -42,7 +43,7 @@ dag:
       retry_delay: 1
       dependencies: ["unstable_root"]
 
-    # Fusione
+    # Final merging
     - task_id: "done"
       type: "PrintTask"
       params:

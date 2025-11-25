@@ -1,0 +1,52 @@
+dag:
+  name: "conditional_branching"
+  tasks:
+
+    - task_id: "check_condition"
+      type: "PythonTask"
+      params:
+        code: |
+          import random, pathlib
+
+          # Decidi quale ramo eseguire
+          result = "branch_a" if random.random() > 0.5 else "branch_b"
+          print(f"[check_condition] Next step: {result}")
+
+          # Salva la scelta in un file (es. nella working dir dell'esecuzione)
+          path = pathlib.Path("branch_choice.txt")
+          path.write_text(result)
+      dependencies: []
+
+    - task_id: "branch_a"
+      type: "PythonTask"
+      params:
+        code: |
+          import pathlib
+
+          path = pathlib.Path("branch_choice.txt")
+          if not path.exists():
+              print("[branch_a] No branch_choice.txt found, cannot decide → skipping A")
+          else:
+              choice = path.read_text().strip()
+              if choice == "branch_a":
+                  print("[branch_a] I am the chosen branch! Running branch A logic...")
+              else:
+                  print(f"[branch_a] Branch choice is '{choice}', not 'branch_a' → skipping A")
+      dependencies: ["check_condition"]
+
+    - task_id: "branch_b"
+      type: "PythonTask"
+      params:
+        code: |
+          import pathlib
+
+          path = pathlib.Path("branch_choice.txt")
+          if not path.exists():
+              print("[branch_b] No branch_choice.txt found, cannot decide → skipping B")
+          else:
+              choice = path.read_text().strip()
+              if choice == "branch_b":
+                  print("[branch_b] I am the chosen branch! Running branch B logic...")
+              else:
+                  print(f"[branch_b] Branch choice is '{choice}', not 'branch_b' → skipping B")
+      dependencies: ["check_condition"]

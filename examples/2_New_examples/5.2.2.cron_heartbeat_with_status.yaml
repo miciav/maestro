@@ -3,29 +3,32 @@ abstract: |
 
 dag:
   name: "cron_heartbeat_with_status"
-  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+  cron_schedule: "*/10 * * * *"  # Each 10 minutes
 
   tasks:
-    # 1) Valuta uno stato fittizio del sistema
+    # 1) Evaluate a fake state of the system
     - task_id: "compute_status"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random
           status = random.choice(["OK", "DEGRADED", "ERROR"])
           print(f"Computed heartbeat status: {status}")
       dependencies: []
 
-    # 2) Stampa un messaggio leggibile a console
+    # 2) Print a readable message to the console
     - task_id: "print_status"
       type: "PrintTask"
       params:
         message: "Heartbeat status computed and printed above."
       dependencies: ["compute_status"]
 
-    # 3) Scrive un log minimale su file (in /tmp per restare innocui)
+    # 3) Write a minimal log on the console (in /tmp)
     - task_id: "log_to_file"
       type: "BashTask"
       params:
-        command: "echo \"$(date) - Heartbeat executed\" >> /tmp/maestro_heartbeat.log"
+        command: |
+          mkdir -p runtime/tmp
+          echo "$(date) - Heartbeat executed" >> runtime/tmp/maestro_heartbeat.log
       dependencies: ["print_status"]
+

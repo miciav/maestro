@@ -17,8 +17,27 @@ dag:
     - task_id: "check_cpu"
       type: "PythonTask"
       params:
-        script: |
-          print("CPU usage check (simulated).")
+        code: |
+          import time
+
+          def read_cpu_times():
+            with open("/proc/stat", "r") as f:
+                fields = f.readline().strip().split()[1:]
+                return list(map(int, fields))
+
+          t1 = read_cpu_times()
+          time.sleep(0.1)
+          t2 = read_cpu_times()
+
+          idle1, total1 = t1[3], sum(t1)
+          idle2, total2 = t2[3], sum(t2)
+
+          idle_delta = idle2 - idle1
+          total_delta = total2 - total1
+
+          usage = 100 * (1 - idle_delta / total_delta)
+
+          print(f"CPU Usage: {usage:.2f}%")
       dependencies: ["heartbeat_start"]
 
     # BRANCH MEMORIA
@@ -42,11 +61,11 @@ dag:
         command: "ps aux | head -n 10"
       dependencies: ["heartbeat_start"]
 
-    # AGGREGAZIONE LOGICA (qui potresti, in futuro, interpretare output reali)
+    # AGGREGAZIONE LOGICA
     - task_id: "aggregate_results"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Aggregating healthcheck results (simulation). Overall: OK")
       dependencies: ["check_cpu", "check_memory", "check_disk", "check_processes"]
 

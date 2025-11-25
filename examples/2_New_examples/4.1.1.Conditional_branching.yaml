@@ -1,6 +1,7 @@
 dag:
   name: "conditional_branching"
   tasks:
+
     - task_id: "check_condition"
       type: "PythonTask"
       params:
@@ -9,11 +10,13 @@ dag:
           result = "branch_a" if random.random() > 0.5 else "branch_b"
           print(f"Next step: {result}")
       dependencies: []
+
     - task_id: "branch_a"
       type: "PrintTask"
       params:
         message: "Running branch A"
       dependencies: ["check_condition"]
+
     - task_id: "branch_b"
       type: "PrintTask"
       params:

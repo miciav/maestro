@@ -34,7 +34,7 @@ dag:
     - task_id: "generate_random_data"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json, random
           values = [random.randint(1, 50) for _ in range(10)]
           with open("random.json", "w") as f:
@@ -57,7 +57,7 @@ dag:
     - task_id: "python_stats"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import json
           with open("random.json") as f:
             data = json.load(f)
@@ -73,7 +73,7 @@ dag:
     - task_id: "bash_count_digits"
       type: "BashTask"
       params:
-        command: "wc -l extracted.txt"
+        command: "echo 'Number of digits:'; wc -l extracted.txt"
       dependencies: ["python_stats"]
 
     # ---------------------------------------------------------

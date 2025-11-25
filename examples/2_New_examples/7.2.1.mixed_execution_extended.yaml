@@ -1,7 +1,5 @@
 abstract: |
-  This DAG extends the original mixed_execution example by introducing
-  a multi-step data-processing workflow that mixes PrintTask, PythonTask,
-  and BashTask execution in a longer and more realistic sequence.
+  This DAG extends the original mixed_execution example by introducing a multi-step data-processing workflow that mixes PrintTask, PythonTask, and BashTask execution in a longer and more realistic sequence.
 
   The pipeline performs:
     - Initialization/logging
@@ -35,8 +33,9 @@ dag:
     - task_id: "generate_data"
       type: "PythonTask"
       params:
-        script: |
-          import json
+        code: |
+          import json, os
+          print(os.getcwd())
           data = {"values": [1, 2, 3, 4, 5, 6]}
           with open("data.json", "w") as f:
             json.dump(data, f)
@@ -49,7 +48,7 @@ dag:
     - task_id: "extract_numbers"
       type: "BashTask"
       params:
-        command: "cat data.json | grep -o '[0-9]' > extracted.txt"
+        command: "cat data.json | grep -o '[0-9]' > extracted.txt; echo 'Created extracted.txt'"
       dependencies: ["generate_data"]
 
     # ---------------------------------------------------------
@@ -67,7 +66,7 @@ dag:
     - task_id: "python_validation"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           with open("extracted.txt") as f:
             lines = f.readlines()
           print("Python validation: extracted", len(lines), "numbers.")

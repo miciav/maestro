@@ -6,36 +6,52 @@ dag:
   cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
 
   tasks:
-    # ROOT: lancia il giro di check
+    # ROOT: start check routine
     - task_id: "heartbeat_root"
       type: "PrintTask"
       params:
         message: "Heartbeat: starting light system checks..."
       dependencies: []
 
-    # Check pseudo-CPU (simulato)
     - task_id: "check_cpu"
       type: "PythonTask"
       params:
-        script: |
-          print("CPU check: (simulated) OK")
+        code: |
+          import time
+
+          def read_cpu_times():
+            with open("/proc/stat", "r") as f:
+                fields = f.readline().strip().split()[1:]
+                return list(map(int, fields))
+
+          t1 = read_cpu_times()
+          time.sleep(0.1)
+          t2 = read_cpu_times()
+
+          idle1, total1 = t1[3], sum(t1)
+          idle2, total2 = t2[3], sum(t2)
+
+          idle_delta = idle2 - idle1
+          total_delta = total2 - total1
+
+          usage = 100 * (1 - idle_delta / total_delta)
+
+          print(f"CPU Usage (real): {usage:.2f}%")
       dependencies: ["heartbeat_root"]
 
-    # Check disco (solo output informativo)
     - task_id: "check_disk"
       type: "BashTask"
       params:
         command: "df -h | head -n 5"
       dependencies: ["heartbeat_root"]
 
-    # Check processi (solo prime righe)
     - task_id: "check_processes"
       type: "BashTask"
       params:
         command: "ps aux | head -n 5"
       dependencies: ["heartbeat_root"]
 
-    # Merge: eseguito solo quando tutti i check sono completati
+    # Final merge
     - task_id: "heartbeat_summary"
       type: "PrintTask"
       params:

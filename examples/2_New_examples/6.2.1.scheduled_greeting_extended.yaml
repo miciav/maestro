@@ -44,7 +44,7 @@ dag:
     - task_id: "python_check"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import platform
           print('Python check executed. Python version:', platform.python_version())
       dependencies: ["show_time"]
