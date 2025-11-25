@@ -6,6 +6,8 @@ abstract: |
 dag:
   name: "bash_chain_heavy_diamond"
   tasks:
+
+    # Introduction
     - task_id: "start_scan"
       type: "PrintTask"
       params:
@@ -16,7 +18,7 @@ dag:
     - task_id: "files_list"
       type: "BashTask"
       params:
-        command: "ls -l"
+        command: "ls"
       dependencies: ["start_scan"]
 
     - task_id: "files_count"
@@ -29,13 +31,13 @@ dag:
     - task_id: "proc_list"
       type: "BashTask"
       params:
-        command: "ps aux"
+        command: "ps aux | head"
       dependencies: ["start_scan"]
 
     - task_id: "proc_count"
       type: "BashTask"
       params:
-        command: "ps aux | wc -l"
+        command: "ps aux --no-heading | wc -l"
       dependencies: ["proc_list"]
 
     # Branch 3
@@ -52,19 +54,26 @@ dag:
       dependencies: ["disk_usage"]
 
     # Branch 4
-    - task_id: "simulated_ping"
+    - task_id: "ready_to_ping"
       type: "BashTask"
       params:
-        command: "echo 'Simulating ping'; sleep 1"
+        command: "echo 'Trying to ping...'; sleep 1"
       dependencies: ["start_scan"]
+
+    - task_id: "real_ping"
+      type: "BashTask"
+      params:
+        command: "ping -c 4 8.8.8.8"
+      dependencies: ["ready_to_ping"]
 
     - task_id: "parse_ping"
       type: "PythonTask"
       params:
-        script: |
-          print("Ping simulation parsed.")
-      dependencies: ["simulated_ping"]
+        code: |
+          print("Ping done - ready for parsing.")
+      dependencies: ["real_ping"]
 
+    # Final merge
     - task_id: "final_merge"
       type: "PrintTask"
       params:

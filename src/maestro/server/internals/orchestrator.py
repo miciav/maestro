@@ -573,30 +573,31 @@ class Orchestrator:
 
                 return  # task completata con successo → si esce
 
-            except Exception as e:
-                # Fallimento del tentativo corrente
+
+            except BaseException as e:
+                # IGNORA SOLO I SEGNALI CHE DEVONO DAVVERO FERMARE TUTTO
+                if isinstance(e, KeyboardInterrupt):
+                    raise
+
                 self.logger.error(f"Task {task_id} failed on attempt {attempt}: {e}")
 
                 task.status = TaskStatus.FAILED
                 with self.status_manager as sm:
                     sm.set_task_status(dag_id, task_id, "failed", execution_id)
 
-                # Verifica se abbiamo ancora tentativi disponibili
                 if attempt <= max_retries:
-                    # Logga e attendi prima del retry
                     self.logger.info(
                         f"Retrying task {task_id} in {retry_delay} seconds "
                         f"({attempt}/{max_retries})"
                     )
                     if retry_delay > 0:
                         time.sleep(retry_delay)
-                    # e poi riparte il while True (nuovo tentativo)
                     continue
                 else:
-                    # Nessun retry rimasto → fallimento definitivo
                     if status_callback:
                         status_callback()
                     raise Exception(f"Task {task_id} failed: {e}") from e
+
 
             finally:
                 # Pulizia del contesto di logging

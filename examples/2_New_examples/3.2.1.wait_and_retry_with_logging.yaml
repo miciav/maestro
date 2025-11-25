@@ -5,40 +5,48 @@ dag:
   name: "wait_and_retry_with_logging"
   tasks:
 
-    # Messaggio iniziale
+    # Initial message
     - task_id: "start"
       type: "PrintTask"
       params:
         message: "Starting retry pipeline..."
       dependencies: []
 
-    # Primo task instabile (fail random 50%)
+    # First unstabile task (fail random 40%)
     - task_id: "unstable_task_1"
       type: "PythonTask"
       params:
-        script: |
-          import random, sys
-          if random.random() < 0.5:
+        code: |
+          import random, sys, time
+          generate_random = random.random()
+          print(f"Task 1 - Generated: {round(generate_random, 2)}")
+          if generate_random < 0.4:
+              print("Failure occurred")
               sys.exit(1)
-          print("Task 1 succeeded!")
+          else:
+            print("Task 1 - Success on this run!")
       retries: 3
       retry_delay: 2
       dependencies: ["start"]
 
-    # Secondo task instabile (fail random 30%)
+    # Second unstable task (fail random 70%)
     - task_id: "unstable_task_2"
       type: "PythonTask"
       params:
-        script: |
-          import random, sys
-          if random.random() < 0.3:
+        code: |
+          import random, sys, time
+          generate_random = random.random()
+          print(f"Task 2 - Generated: {round(generate_random, 2)}")
+          if generate_random < 0.7:
+              print("Failure occurred")
               sys.exit(1)
-          print("Task 2 succeeded!")
-      retries: 2
-      retry_delay: 1
+          else:
+            print("Task 2 - Success on this run!")
+      retries: 3
+      retry_delay: 2
       dependencies: ["unstable_task_1"]
 
-    # Task finale
+    # Final task
     - task_id: "final_message"
       type: "PrintTask"
       params:

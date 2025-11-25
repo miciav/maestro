@@ -9,23 +9,40 @@ dag:
       type: "BashTask"
       params:
         command: |
-          if [ $((RANDOM % 3)) -eq 0 ]; then
-            echo "Failing Bash task"; exit 1;
+          echo "==== Unstable Bash Task - New run ===="
+
+          # Random integer between 0 and 99
+          RANDOM_VALUE=$((RANDOM % 100))
+          echo "Unstable Bash Task - Generated value: ${RANDOM_VALUE}"
+
+          # 1/3 of probabilities of failure (when RANDOM_VALUE % 3 == 0)
+          if [ $((RANDOM_VALUE % 3)) -eq 0 ]; then
+            echo "Unstable Bash Task - FAIL on this run (exit code 1)"
+            exit 1
           else
-            echo "Bash succeeded!";
+            echo "Unstable Bash Task - SUCCESS on this run (exit code 0)"
           fi
       retries: 4
-      retry_delay: 1
+      retry_delay: 2
       dependencies: []
 
     - task_id: "unstable_python"
       type: "PythonTask"
       params:
-        script: |
-          import random, sys
+        code: |
+          import random, sys, time
+
+          # Genera un numero casuale tra 0 e 1
+          generate_random = random.random()
+          print(f"Unstable Python Task - Generated: {round(generate_random, 2)}")
+
+          # Usa una soglia di 0.4 per decidere se fallire oppure no
           if random.random() < 0.4:
+              # Fallimento esplicito: il processo termina con errore
               sys.exit("Python failed")
-          print("Python succeeded")
+          else:
+              # Caso di successo
+              print("Unstable Python Task - Success on this run!")
       retries: 2
       retry_delay: 2
       dependencies: ["unstable_bash"]

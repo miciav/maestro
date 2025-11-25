@@ -1,7 +1,6 @@
 
 abstract: |
-  This DAG tests error handling with fail_fast disabled. A failing BashTask is followed
-  by Python and Print tasks that continue running regardless of the failure.
+  This DAG tests error handling with fail_fast disabled. A failing BashTask is followed by Python and Print tasks that continue running regardless of the failure.
 
 dag:
   name: "bash_chain_with_error_handling"
@@ -24,7 +23,7 @@ dag:
     - task_id: "python_info"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("This runs even after a failure.")
       dependencies: ["intentional_error"]
 

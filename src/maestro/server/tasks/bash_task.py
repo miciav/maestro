@@ -29,6 +29,7 @@ class BashTask(BaseTask):
         process = subprocess.Popen(
             self.command,
             shell=True,
+            executable="/bin/bash",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -66,16 +67,35 @@ class BashTask(BaseTask):
             )
 
         # Ritorno exit code
+
         process.wait()
 
-        if process.returncode != 0:
+        rc = process.returncode
+
+        if rc != 0:
+            msg = f"[BashTask] Failed with exit code {rc}"
+            print(msg, flush=True)
             sm.add_log(
                 dag_id=dag_id,
                 execution_id=execution_id,
                 task_id=task_id,
-                message=f"[BashTask] Failed with exit code {process.returncode}",
+                message=msg,
                 level="ERROR"
             )
+
+            # QUI: solleva un'eccezione → farà scattare il retry
+            raise Exception(f"BashTask failed with exit code {rc}")
+
+        # Se arrivo qui, exit code 0 -> success
+        success_msg = "[BashTask] Completed successfully (exit code 0)"
+        print(success_msg, flush=True)
+        sm.add_log(
+            dag_id=dag_id,
+            execution_id=execution_id,
+            task_id=task_id,
+            message=success_msg,
+            level="INFO"
+        )
 
 
     def to_dict(self):

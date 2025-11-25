@@ -8,7 +8,7 @@ dag:
   tasks:
     - task_id: "t1"
       type: "PrintTask"
-      params: { message: "Start long pipeline" }
+      params: { message: "Start long pipeline..." }
       dependencies: []
 
     - task_id: "t2"
@@ -19,47 +19,47 @@ dag:
     - task_id: "t3"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Step 3 complete")
       dependencies: ["t2"]
 
     - task_id: "t4"
       type: "BashTask"
-      params: { command: "sleep 1 && echo 'Pause done'" }
+      params: { command: "sleep 1 && echo 'Pause done, task 4 completed.'" }
       dependencies: ["t3"]
 
     - task_id: "t5"
       type: "PrintTask"
-      params: { message: "Halfway there..." }
+      params: { message: "Halfway there... Task 5 done." }
       dependencies: ["t4"]
 
     - task_id: "t6"
       type: "BashTask"
-      params: { command: "echo 'Running step 6'" }
+      params: { command: "echo 'Running step 6' && sleep 2 && echo 'Task 6 successfully executed after 2 seconds pause...'" }
       dependencies: ["t5"]
 
     - task_id: "t7"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Step 7: Python OK")
       dependencies: ["t6"]
 
     - task_id: "t8"
       type: "BashTask"
-      params: { command: "echo 'Step 8'" }
+      params: { command: "echo 'Step 8'; echo 'Everything works fine...'" }
       dependencies: ["t7"]
 
     - task_id: "t9"
       type: "BashTask"
-      params: { command: "sleep 1" }
+      params: { command: "sleep 1 && echo 'Another pause executed.'" }
       dependencies: ["t8"]
 
     - task_id: "t10"
       type: "PythonTask"
       params:
-        script: |
-          print("Almost done...")
+        code: |
+          print("Almost done... task 10 completed.")
       dependencies: ["t9"]
 
     - task_id: "t11"

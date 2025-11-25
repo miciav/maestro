@@ -9,7 +9,7 @@ dag:
     - task_id: "list_files"
       type: "BashTask"
       params:
-        command: "ls -l"
+        command: "ls -a"
       dependencies: []  # Root branch A
 
     - task_id: "list_processes"
@@ -27,7 +27,7 @@ dag:
     - task_id: "count_processes"
       type: "BashTask"
       params:
-        command: "ps aux | wc -l"
+        command: "ps aux --no-heading | wc -l"
       dependencies: ["list_processes"]
 
     - task_id: "final_message"

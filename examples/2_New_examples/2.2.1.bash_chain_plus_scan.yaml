@@ -1,30 +1,50 @@
 
 abstract: |
-  This DAG extends the original bash_chain by adding a disk usage check and a Python
-  file count operation. It tests sequential task execution and mixed Bash/Python usage.
+  This DAG extends the example 2.1.1 by adding a disk usage check and a Python file count operation. It tests sequential task execution and mixed Bash/Python usage.
 
 dag:
   name: "bash_chain_plus_scan"
   tasks:
+
+    - task_id: "start_listing_files"
+      type: "PrintTask"
+      params:
+        message: "Listing files, even hidden ones."
+      dependencies: []
+
     - task_id: "list_files"
       type: "BashTask"
       params:
-        command: "ls -l"
-      dependencies: []   # First task: lists files
+        command: "ls -a"
+      dependencies: ["start_listing_files"]   # First task: lists files
+
+    - task_id: "start_memory_usage"
+      type: "PrintTask"
+      params:
+        message: "Memory usage..."
+      dependencies: ["list_files"]
 
     - task_id: "disk_usage"
       type: "BashTask"
       params:
         command: "du -sh ."
-      dependencies: ["list_files"]   # Depends on list_files
+      dependencies: ["start_memory_usage"]   # Depends on list_files
+
+    - task_id: "python_name_folder"
+      type: "PythonTask"
+      params:
+        code: |
+          import os
+          print("Folder name:", os.getcwd())
+      dependencies: ["disk_usage"]   # Python post-processing
 
     - task_id: "python_count_files"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import os
-          print("FILE_COUNT:", len(os.listdir('.')))
-      dependencies: ["disk_usage"]   # Python post-processing
+          print("File count:", len(os.listdir('.')))
+      dependencies: ["python_name_folder"]   # Python post-processing
 
     - task_id: "end"
       type: "PrintTask"

@@ -1,8 +1,7 @@
 
 abstract: |
-  This DAG intentionally triggers multiple failures in parallel branches while
-  fail_fast=false ensures the run continues. Useful for stress‑testing logging
-  and resilience mechanisms.
+  This DAG intentionally triggers multiple failures in parallel branches while fail_fast=false ensures the run continues.
+  Useful for stress‑testing logging and resilience mechanisms.
 
 dag:
   name: "bash_chain_error_storm"
@@ -37,7 +36,7 @@ dag:
     - task_id: "python_recover"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Recovery executed despite failures.")
       dependencies: ["invalid_cmd_1", "invalid_cmd_2"]
 
