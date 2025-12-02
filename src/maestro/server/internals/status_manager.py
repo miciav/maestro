@@ -176,6 +176,36 @@ class StatusManager:
                 task.completed_at = datetime.now()
 
     # ----------------------------------------------------------------------
+    # Metodo: set_task_output
+    def set_task_output(
+        self,
+        dag_id: str,
+        task_id: str,
+        execution_id: str,
+        output: Any
+    ):
+        """Store JSON-serializable output for a task."""
+        with self.Session.begin() as session:
+            task = (
+                session.query(TaskORM)
+                .filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id)
+                .first()
+            )
+
+            if not task:
+                # Should never happen if initialization is correct,
+                # but we allow automatic creation for safety.
+                task = TaskORM(
+                    dag_id=dag_id,
+                    id=task_id,
+                    execution_id=execution_id,
+                    status="pending",
+                )
+                session.add(task)
+
+            task.output = json.dumps(output)
+
+    # ----------------------------------------------------------------------
     # Metodo: get_task_status
     def get_task_status(
         self, dag_id: str, task_id: str, execution_id: str = None
@@ -210,6 +240,30 @@ class StatusManager:
                 )
 
             return task.status if task else None
+
+    # ----------------------------------------------------------------------
+    # Metodo: get_task_output
+    def get_task_output(
+        self,
+        dag_id: str,
+        task_id: str,
+        execution_id: str
+    ) -> Any:
+        """Return the decoded output of a task, or None if not found."""
+        with self.Session() as session:
+            task = (
+                session.query(TaskORM)
+                .filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id)
+                .first()
+            )
+
+            if not task or task.output is None:
+                return None
+
+            try:
+                return json.loads(task.output)
+            except json.JSONDecodeError:
+                return task.output  # fallback: raw string
 
     # ----------------------------------------------------------------------
     # Method: get_dag_status
