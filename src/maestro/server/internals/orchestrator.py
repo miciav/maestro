@@ -467,15 +467,44 @@ class Orchestrator:
         failed_tasks: Set[str],
         skipped_tasks: Set[str]
     ) -> List[str]:
-        """Find tasks that are ready to run (all dependencies completed)."""
+        """Find tasks that are ready to run (all dependencies completed AND condition == True)."""
         ready_tasks = []
+        dag_id = dag.dag_id
+        execution_id = dag.execution_id
+        sm = StatusManager.get_instance()
 
-        for task_id in pending_tasks:
+        # We must skip tasks whose condition is False
+        to_skip = []
+
+        for task_id in list(pending_tasks):
             task = dag.tasks[task_id]
 
-            # Check if all dependencies are completed
-            if all(dep in completed_tasks for dep in task.dependencies):
-                ready_tasks.append(task_id)
+            # Check dependencies completion
+            if not all(dep in completed_tasks for dep in task.dependencies):
+                continue
+
+            # Check condition (if present)
+            condition = getattr(task, "condition", None)
+            if condition:
+                if not self._evaluate_condition(task, dag_id, execution_id):
+                    # Mark SKIPPED
+                    task.status = TaskStatus.SKIPPED
+                    sm.set_task_status(dag_id, task_id, "skipped", execution_id)
+                    skipped_tasks.add(task_id)
+                    to_skip.append(task_id)
+
+                    self.logger.info(
+                        f"Skipping task {task_id} due to condition: {condition}"
+                    )
+                    continue
+
+            # If we reach here → task is ready
+            ready_tasks.append(task_id)
+
+        # Remove skipped tasks from pending set
+        for tid in to_skip:
+            if tid in pending_tasks:
+                pending_tasks.remove(tid)
 
         return ready_tasks
 
@@ -491,6 +520,34 @@ class Orchestrator:
             for dep in task.dependencies
         )
 
+    def _evaluate_condition(self, task, dag_id: str, execution_id: str) -> bool:
+        """Evaluate the boolean condition of a task using output_of()."""
+        condition = getattr(task, "condition", None)
+        if not condition:
+            return True  # No condition → task is allowed
+
+        sm = StatusManager.get_instance()
+
+        # Helper to retrieve outputs from PythonTask
+        def output_of(tid: str):
+            result_json = sm.get_task_output(dag_id, tid, execution_id)
+            return result_json  # Can be dict, list, int, str depending on task return
+
+        try:
+            # Safe environment
+            safe_globals = {
+                "__builtins__": {},
+                "output_of": output_of,
+            }
+            safe_locals = {}
+
+            return bool(eval(condition, safe_globals, safe_locals))
+
+        except Exception as e:
+            self.logger.error(
+                f"Condition evaluation failed for task {task.task_id}: {e}"
+            )
+            return False
 
     def _execute_task_async(
         self,
