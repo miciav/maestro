@@ -88,9 +88,16 @@ class DAGLoader:
         if not task_class:
             raise ValueError(f"Unknown task type: {task_type_name}")
 
-        # Merge params into main config (for backward compatibility)
+        # Merge params + preserve condition
+
         params = task_config.pop("params", {})
+        condition = task_config.get("condition")  # keep condition if present
+
         task_config.update(params)
+
+        # Reinserisci condition se c'era
+        if condition is not None:
+            task_config["condition"] = condition
 
         # Add DAG file path
         task_config["dag_file_path"] = dag_file_path

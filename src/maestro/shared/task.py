@@ -29,6 +29,7 @@ class Task(BaseModel, ABC):
     executor: str = "local" # New field for executor type
     on_success: Optional[Callable] = None # Callback for when the task completes successfully
     on_failure: Optional[Callable] = None # Callback for when the task fails
+    condition: Optional[str] = None
 
     class Config:
         arbitrary_types_allowed = True
