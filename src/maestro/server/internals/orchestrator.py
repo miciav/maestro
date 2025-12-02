@@ -549,6 +549,13 @@ class Orchestrator:
             )
             return False
 
+        print("[DEBUG] condition eval:",
+            task.task_id,
+            expr,
+            "output_of(check_condition)=",
+            safe_evaluator_globals["output_of"]("check_condition"),
+            flush=True)
+
     def _execute_task_async(
         self,
         task,

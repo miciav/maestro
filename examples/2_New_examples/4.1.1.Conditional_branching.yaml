@@ -1,24 +1,21 @@
 dag:
-  name: "conditional_branching"
   tasks:
-
-    - task_id: "check_condition"
+    - task_id: check_condition
       type: "PythonTask"
-      params:
-        code: |
-          import random
-          result = "branch_a" if random.random() > 0.5 else "branch_b"
-          print(f"Next step: {result}")
-      dependencies: []
+      code: |
+        import random
+        result = "branch_a" if random.random() > 0.5 else "branch_b"
+        print(f"Next step: {result}")
+        task_output = {"branch": result}
 
-    - task_id: "branch_a"
+    - task_id: branch_a
       type: "PrintTask"
-      params:
-        message: "Running branch A"
-      dependencies: ["check_condition"]
+      message: "Eseguo branch A"
+      dependencies: [check_condition]
+      condition: "output_of('check_condition')['branch'] == 'branch_a'"
 
-    - task_id: "branch_b"
+    - task_id: branch_b
       type: "PrintTask"
-      params:
-        message: "Running branch B"
-      dependencies: ["check_condition"]
+      message: "Eseguo branch B"
+      dependencies: [check_condition]
+      condition: "output_of('check_condition')['branch'] == 'branch_b'"
