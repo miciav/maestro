@@ -1,0 +1,76 @@
+abstract: |
+  This DAG performs a high-parallelism numeric partitioning workflow.
+  Starting from a 50-number seed file, five BashTask branches independently filter different numeric ranges in parallel.
+  A PythonTask then merges all filtered subsets and computes global statistics.
+  The example stresses Maestro’s ability to handle wide fan-out, large intermediate files, and multi-branch consolidation at scale.
+
+dag:
+  name: "massive_fanout_consolidation"
+
+  tasks:
+
+    - task_id: "seed"
+      type: "PythonTask"
+      params:
+        code: |
+          import os, random
+          path="/tmp/maestro_data"; os.makedirs(path, exist_ok=True)
+          nums=[random.randint(1,200) for _ in range(50)]
+          open(f"{path}/seed.txt","w").write("\n".join(map(str,nums)))
+          print("Seed dataset created.")
+      dependencies: []
+
+    # 5 parallel branches filtering different ranges
+    - task_id: "range_1_40"
+      type: "BashTask"
+      params:
+        command: "awk '$1>=1 && $1<=40' /tmp/maestro_data/seed.txt > /tmp/maestro_data/r1.txt"
+      dependencies: ["seed"]
+
+    - task_id: "range_41_80"
+      type: "BashTask"
+      params:
+        command: "awk '$1>=41 && $1<=80' /tmp/maestro_data/seed.txt > /tmp/maestro_data/r2.txt"
+      dependencies: ["seed"]
+
+    - task_id: "range_81_120"
+      type: "BashTask"
+      params:
+        command: "awk '$1>=81 && $1<=120' /tmp/maestro_data/seed.txt > /tmp/maestro_data/r3.txt"
+      dependencies: ["seed"]
+
+    - task_id: "range_121_160"
+      type: "BashTask"
+      params:
+        command: "awk '$1>=121 && $1<=160' /tmp/maestro_data/seed.txt > /tmp/maestro_data/r4.txt"
+      dependencies: ["seed"]
+
+    - task_id: "range_161_200"
+      type: "BashTask"
+      params:
+        command: "awk '$1>=161 && $1<=200' /tmp/maestro_data/seed.txt > /tmp/maestro_data/r5.txt"
+      dependencies: ["seed"]
+
+    # Merge final stats
+    - task_id: "merge_ranges"
+      type: "PythonTask"
+      params:
+        code: |
+          import glob
+          vals=[]
+          for file in glob.glob("/tmp/maestro_data/r*.txt"):
+              vals.extend(int(x) for x in open(file))
+          print("Total collected values:", len(vals))
+          print("Sum:", sum(vals))
+      dependencies:
+        - "range_1_40"
+        - "range_41_80"
+        - "range_81_120"
+        - "range_121_160"
+        - "range_161_200"
+
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Massive fan-out consolidation complete!"
+      dependencies: ["merge_ranges"]

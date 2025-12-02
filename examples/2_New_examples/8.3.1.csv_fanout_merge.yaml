@@ -1,0 +1,54 @@
+abstract: |
+  This advanced DAG processes a single CSV dataset through three independent transformation branches.
+  Branch A sorts the numbers, Branch B filters high-valued entries using Bash, and Branch C computes statistics.
+  Once all branches finish, their results converge in a final PrintTask.
+  This pattern exercises parallelism, cross-branch data divergence, and fan-in consolidation in a real-world mini workflow.
+
+dag:
+  name: "csv_fanout_merge"
+
+  tasks:
+
+    - task_id: "create_csv"
+      type: "PythonTask"
+      params:
+        code: |
+          import os, random
+          path="/tmp/maestro_data"; os.makedirs(path, exist_ok=True)
+          with open(f"{path}/data.csv", "w") as f:
+              for _ in range(30):
+                  f.write(str(random.randint(1,100)) + "\n")
+          print("CSV created.")
+      dependencies: []
+
+    - task_id: "branch_a"
+      type: "PythonTask"
+      params:
+        code: |
+          vals = [int(x) for x in open("/tmp/maestro_data/data.csv")]
+          with open("/tmp/maestro_data/sorted.txt","w") as f:
+              f.write("\n".join(map(str, sorted(vals))))
+          print("Branch A sorted numbers written.")
+      dependencies: ["create_csv"]
+
+    - task_id: "branch_b"
+      type: "BashTask"
+      params:
+        command: "grep '^[5-9][0-9]$' /tmp/maestro_data/data.csv > /tmp/maestro_data/high.txt || true"
+      dependencies: ["create_csv"]
+
+    - task_id: "branch_c"
+      type: "PythonTask"
+      params:
+        code: |
+          vals=[int(x) for x in open("/tmp/maestro_data/data.csv")]
+          with open("/tmp/maestro_data/stats.txt","w") as f:
+              f.write(f"min={min(vals)} max={max(vals)} avg={round(sum(vals)/len(vals), 2)}")
+          print("Branch C stats created.")
+      dependencies: ["create_csv"]
+
+    - task_id: "merge"
+      type: "PrintTask"
+      params:
+        message: "Fanout/merge CSV pipeline completed!"
+      dependencies: ["branch_a", "branch_b", "branch_c"]

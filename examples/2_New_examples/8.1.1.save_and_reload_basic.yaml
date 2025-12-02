@@ -1,0 +1,40 @@
+abstract: |
+  This DAG demonstrates the most essential "write → read" workflow.
+  A PythonTask writes a small text file to /tmp/maestro_data/, a second PythonTask loads the file back into memory, and a PrintTask confirms completion.
+  It is the minimal example of inter-task data persistence and file-based communication within Maestro.
+
+dag:
+  name: "save_and_reload_basic"
+
+  tasks:
+
+    - task_id: "write_file"
+      type: "PythonTask"
+      params:
+        code: |
+          import os
+          path = "/tmp/maestro_data"
+          os.makedirs(path, exist_ok=True)
+
+          filepath = os.path.join(path, "hello.txt")
+          with open(filepath, "w") as f:
+              f.write("Hello world from Maestro!")
+
+          print(f"Written file: {filepath}")
+      dependencies: []
+
+    - task_id: "read_file"
+      type: "PythonTask"
+      params:
+        code: |
+          filepath = "/tmp/maestro_data/hello.txt"
+          with open(filepath) as f:
+              content = f.read()
+          print("Read content:", content)
+      dependencies: ["write_file"]
+
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Basic file save/load completed!"
+      dependencies: ["read_file"]

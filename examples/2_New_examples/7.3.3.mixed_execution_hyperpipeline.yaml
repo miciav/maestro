@@ -1,7 +1,5 @@
 abstract: |
-  This DAG represents a “hyperpipeline” workflow — a difficult-level DAG with
-  multiple levels of branching, cross-branch transformations, wide fan-out and
-  multi-step merging. It is designed to push the orchestrator to its limits in
+  This DAG represents a “hyperpipeline” workflow — a difficult-level DAG with multiple levels of branching, cross-branch transformations, wide fan-out and multi-step merging. It is designed to push the orchestrator to its limits in
   terms of:
 
     - Concurrency

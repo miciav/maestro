@@ -1,0 +1,58 @@
+abstract: |
+  This intermediate-level DAG builds a simple numeric processing pipeline.
+  A PythonTask generates a numeric dataset and stores it in /tmp/maestro_data/.
+  A BashTask filters the values using a command-line expression, creating a refined dataset.
+  Finally, a PythonTask performs lightweight statistical analysis on the filtered results.
+  The DAG demonstrates cross-language task cooperation and basic sequential data transformation.
+
+dag:
+  name: "generate_filter_summarize"
+
+  tasks:
+
+    # Create dataset
+    - task_id: "create_dataset"
+      type: "PythonTask"
+      params:
+        code: |
+          import os, random
+
+          path = "/tmp/maestro_data"
+          os.makedirs(path, exist_ok=True)
+
+          outfile = f"{path}/numbers.txt"
+          with open(outfile, "w") as f:
+              for _ in range(20):
+                  f.write(str(random.randint(1,100)) + "\n")
+
+          print("Generated:", outfile)
+      dependencies: []
+
+    # Bash filters numbers ≥ 50
+    - task_id: "filter_numbers"
+      type: "BashTask"
+      params:
+        command: "grep -E '^[5-9][0-9]$' /tmp/maestro_data/numbers.txt > /tmp/maestro_data/high_numbers.txt || true"
+      dependencies: ["create_dataset"]
+
+    # Python computes summary
+    - task_id: "summarize"
+      type: "PythonTask"
+      params:
+        code: |
+          import numpy as np
+
+          with open("/tmp/maestro_data/high_numbers.txt") as f:
+              data = [int(x) for x in f.read().split()]
+
+          if data:
+              print("High numbers summary: min =", min(data), "max =", max(data), "avg =", sum(data)/len(data))
+          else:
+              print("No high numbers found.")
+      dependencies: ["filter_numbers"]
+
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Intermediate pipeline completed."
+      dependencies: ["summarize"]

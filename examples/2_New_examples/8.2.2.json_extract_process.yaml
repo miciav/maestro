@@ -1,0 +1,50 @@
+abstract: |
+  This DAG processes structured JSON data across Python and Bash tasks.
+  It begins by generating a random-value JSON file.
+  A BashTask uses jq to extract values into a flat, line-based file.
+  A final PythonTask loads these extracted values and performs counting and parity-based analysis.
+  The workflow highlights hybrid processing and external tool integration for JSON pipelines
+
+dag:
+  name: "json_extract_process"
+
+  tasks:
+
+    - task_id: "make_json"
+      type: "PythonTask"
+      params:
+        code: |
+          import json, os, random
+
+          path = "/tmp/maestro_data"
+          os.makedirs(path, exist_ok=True)
+
+          data = {"values": [random.randint(0,10) for _ in range(15)]}
+          with open(f"{path}/data.json", "w") as f:
+              json.dump(data, f)
+
+          print("JSON created:", data)
+      dependencies: []
+
+    - task_id: "extract_values"
+      type: "BashTask"
+      params:
+        command: "jq '.values[]' /tmp/maestro_data/data.json > /tmp/maestro_data/flat_values.txt"
+      dependencies: ["make_json"]
+
+    - task_id: "analyze"
+      type: "PythonTask"
+      params:
+        code: |
+          with open("/tmp/maestro_data/flat_values.txt") as f:
+              arr = [int(x) for x in f.read().split()]
+
+          print("Count =", len(arr))
+          print("Even numbers =", [x for x in arr if x % 2 == 0])
+      dependencies: ["extract_values"]
+
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "JSON extract & analyze completed!"
+      dependencies: ["analyze"]
