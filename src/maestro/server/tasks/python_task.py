@@ -73,11 +73,37 @@ class PythonTask(BaseTask):
                 exec(code, env)
             else:
                 raise ValueError("PythonTask requires either 'code' or 'script_path'.")
+
+            # Output catch
+
+            output = None
+
+            # Priorità 1: __output__
+            if "__output__" in env:
+                output = env["__output__"]
+
+            # Priorità 2: result (pattern: result = main())
+            elif "result" in env:
+                output = env["result"]
+
+            # Priorità 3: output (fallback)
+            elif "output" in env:
+                output = env["output"]
+
+            # Solo se c'è un output significativo, salvalo nel DB
+            if output is not None:
+                sm.set_task_output(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                    output=output
+                )
+
         except Exception:
-            # logga l'eccezione nel DB
+            # log eccezione...
             tb = traceback.format_exc()
             for line in tb.splitlines():
                 if line.strip():
                     _log_line("ERROR", f"[PythonTask][exception] {line}")
-            # rialza per far fallire il task
             raise
+
