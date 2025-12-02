@@ -31,10 +31,13 @@ dag:
     - task_id: "evaluate_condition"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random
-          condition = "A" if random.random() > 0.5 else "B"
+          random_number = round(random.random(), 2)
+          print("Number:", random_number)
+          condition = "A" if random_number > 0.5 else "B"
           print(f"Condition evaluated: {condition}")
+          task_output = {"branch": condition}
       dependencies: ["init"]
 
     # ---------------------------------------------------------
@@ -45,6 +48,7 @@ dag:
       params:
         command: "echo 'Branch A: Listing files'; ls -1 | head -n 5"
       dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'A'"
 
     # ---------------------------------------------------------
     # 4) Branch B: prints some process info.
@@ -52,8 +56,9 @@ dag:
     - task_id: "branch_b_action"
       type: "BashTask"
       params:
-        command: "echo 'Branch B: Listing processes'; ps aux | head -n 5"
+        command: "echo 'Branch B: Listing processes'; echo 'Branch B executing!'; sleep 1; echo 'Done'"
       dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'B'"
 
     # ---------------------------------------------------------
     # 5) Final merge: executed only when both branches finish.

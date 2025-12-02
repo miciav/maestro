@@ -3,24 +3,13 @@ import logging
 from maestro.server.tasks.base import BaseTask
 from maestro.server.internals.status_manager import StatusManager
 
-
 logger = logging.getLogger(__name__)
 logger.propagate = True
 
 class BashTask(BaseTask):
-    """
-    A task that executes a Bash command locally.
-    Captures stdout and stderr and sends them to the logging system.
-    """
-
     command: str
 
-
     def execute_local(self):
-        """
-        BashTask: esegue il comando e registra stdout/stderr nel DB riga per riga,
-        con timestamp corretto come PythonTask.
-        """
         sm = StatusManager.get_instance()
         dag_id = self.dag_id
         execution_id = self.execution_id
@@ -36,7 +25,9 @@ class BashTask(BaseTask):
             bufsize=1
         )
 
-        # Leggi STDOUT riga per riga
+        captured_output = None  # <--- nuovo!
+
+        # STDOUT
         for line in process.stdout:
             clean = line.rstrip("\n")
             msg = f"[BashTask][stdout] {clean}"
@@ -50,6 +41,16 @@ class BashTask(BaseTask):
                 message=msg,
                 level="INFO"
             )
+
+            # NEW: detect structured output: OUTPUT: ...
+            if clean.lstrip().startswith("OUTPUT:"):
+                value = clean[len("OUTPUT:"):].strip()
+                captured_output = value
+
+                raw = clean.lstrip()
+                if raw.startswith("OUTPUT:"):
+                    value = raw.split("OUTPUT:", 1)[1].strip()
+                    captured_output = value
 
         # Leggi STDERR riga per riga
         for line in process.stderr:
@@ -66,10 +67,8 @@ class BashTask(BaseTask):
                 level="ERROR"
             )
 
-        # Ritorno exit code
-
+        # Attendi la fine del processo
         process.wait()
-
         rc = process.returncode
 
         if rc != 0:
@@ -82,11 +81,13 @@ class BashTask(BaseTask):
                 message=msg,
                 level="ERROR"
             )
-
-            # QUI: solleva un'eccezione → farà scattare il retry
             raise Exception(f"BashTask failed with exit code {rc}")
 
-        # Se arrivo qui, exit code 0 -> success
+        # NEW — persist captured output (if present)
+        if captured_output is not None:
+            sm.set_task_output(dag_id, execution_id, task_id, captured_output)
+
+        # Success log finale
         success_msg = "[BashTask] Completed successfully (exit code 0)"
         print(success_msg, flush=True)
         sm.add_log(
@@ -96,7 +97,6 @@ class BashTask(BaseTask):
             message=success_msg,
             level="INFO"
         )
-
 
     def to_dict(self):
         """Include the command field in serialized form."""

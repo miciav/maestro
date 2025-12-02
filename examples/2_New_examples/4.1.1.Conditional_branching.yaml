@@ -4,9 +4,11 @@ dag:
       type: "PythonTask"
       code: |
         import random
-        result = "branch_a" if random.random() > 0.5 else "branch_b"
-        print(f"Next step: {result}")
-        task_output = {"branch": result}
+        random_number = random.random()
+        print("Random number:", round(random_number, 2))
+        branch = "branch_a" if random_number > 0.5 else "branch_b"
+        print(f"Next step: {branch}")
+        result = {"branch": branch}
 
     - task_id: branch_a
       type: "PrintTask"

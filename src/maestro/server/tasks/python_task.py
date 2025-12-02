@@ -74,19 +74,24 @@ class PythonTask(BaseTask):
             else:
                 raise ValueError("PythonTask requires either 'code' or 'script_path'.")
 
-            # Output catch
-
+            # -----------------------------
+            # 1) Cattura output dal task
+            # -----------------------------
             output = None
 
-            # Priorità 1: __output__
-            if "__output__" in env:
+            # Priorità 1: task_output (come stai usando nella DAG)
+            if "task_output" in env:
+                output = env["task_output"]
+
+            # Priorità 2: __output__
+            elif "__output__" in env:
                 output = env["__output__"]
 
-            # Priorità 2: result (pattern: result = main())
+            # Priorità 3: result (pattern: result = ...)
             elif "result" in env:
                 output = env["result"]
 
-            # Priorità 3: output (fallback)
+            # Priorità 4: output (fallback)
             elif "output" in env:
                 output = env["output"]
 
@@ -96,7 +101,7 @@ class PythonTask(BaseTask):
                     dag_id=dag_id,
                     task_id=task_id,
                     execution_id=execution_id,
-                    output=output
+                    output=output,
                 )
 
         except Exception:
@@ -106,4 +111,3 @@ class PythonTask(BaseTask):
                 if line.strip():
                     _log_line("ERROR", f"[PythonTask][exception] {line}")
             raise
-

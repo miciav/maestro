@@ -459,6 +459,7 @@ class Orchestrator:
                 if not ready_tasks and running_tasks:
                     threading.Event().wait(0.1)
 
+
     def _find_ready_tasks(
         self,
         dag: DAG,
@@ -467,46 +468,60 @@ class Orchestrator:
         failed_tasks: Set[str],
         skipped_tasks: Set[str]
     ) -> List[str]:
-        """Find tasks that are ready to run (all dependencies completed AND condition == True)."""
-        ready_tasks = []
+        """
+        Find tasks that are ready to run.
+
+        Un task è "ready" quando:
+        - tutte le sue dipendenze sono in stato terminale
+          (completed, failed o skipped)
+        - e, se ha una condition, questa viene valutata a True.
+
+        I task la cui condition risulta False vengono marcati come SKIPPED qui.
+        """
+        ready_tasks: List[str] = []
+
         dag_id = dag.dag_id
         execution_id = dag.execution_id
         sm = StatusManager.get_instance()
 
-        # We must skip tasks whose condition is False
-        to_skip = []
+        # Stati "terminali": la dipendenza non è più né pending né running
+        terminal_deps = completed_tasks | failed_tasks | skipped_tasks
 
-        for task_id in list(pending_tasks):
+        # Task da rimuovere da pending perché skippati per condition False
+        to_skip: List[str] = []
+
+        for task_id in pending_tasks:
             task = dag.tasks[task_id]
 
-            # Check dependencies completion
-            if not all(dep in completed_tasks for dep in task.dependencies):
+            # Dipendenze ancora non "chiuse"? Non è pronto.
+            if not all(dep in terminal_deps for dep in task.dependencies):
                 continue
 
-            # Check condition (if present)
+            # Se ha una condition, valutiamola.
             condition = getattr(task, "condition", None)
             if condition:
                 if not self._evaluate_condition(task, dag_id, execution_id):
-                    # Mark SKIPPED
+                    # Condition False → SKIPPED qui
                     task.status = TaskStatus.SKIPPED
-                    sm.set_task_status(dag_id, task_id, "skipped", execution_id)
                     skipped_tasks.add(task_id)
+                    sm.set_task_status(dag_id, task_id, "skipped", execution_id)
                     to_skip.append(task_id)
-
                     self.logger.info(
                         f"Skipping task {task_id} due to condition: {condition}"
                     )
-                    continue
+                    continue  # non è ready
 
-            # If we reach here → task is ready
+            # Se siamo qui: tutte le dipendenze sono terminali
+            # e la condition (se presente) è True → task pronto
             ready_tasks.append(task_id)
 
-        # Remove skipped tasks from pending set
+        # Rimuovi dai pending i task skippati per condition False
         for tid in to_skip:
             if tid in pending_tasks:
                 pending_tasks.remove(tid)
 
         return ready_tasks
+
 
     def _has_failed_dependencies(
         self,
@@ -514,11 +529,14 @@ class Orchestrator:
         failed_tasks: Set[str],
         skipped_tasks: Set[str]
     ) -> bool:
-        """Check if task has any failed or skipped dependencies."""
-        return any(
-            dep in failed_tasks or dep in skipped_tasks
-            for dep in task.dependencies
-        )
+        """
+        A task is blocked ONLY if one of its dependencies FAILED.
+
+        Skipped dependencies do not block downstream tasks — this enables
+        branching with a final merge step, where only one branch runs.
+        """
+        return any(dep in failed_tasks for dep in task.dependencies)
+
 
     def _evaluate_condition(self, task, dag_id: str, execution_id: str) -> bool:
         """Evaluate the boolean condition of a task using output_of()."""

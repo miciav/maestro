@@ -38,9 +38,11 @@ dag:
       params:
         command: |
           if [ $((RANDOM % 2)) -eq 0 ]; then
-            echo "Condition result: A";
+            echo "Condition result: A"
+            echo "OUTPUT: A"
           else
-            echo "Condition result: B";
+            echo "Condition result: B"
+            echo "OUTPUT: B"
           fi
       dependencies: ["init"]
 
@@ -52,6 +54,7 @@ dag:
       params:
         command: "echo 'Branch A: Disk usage'; df -h | head -n 5"
       dependencies: ["bash_condition"]
+      condition: "output_of('bash_condition') == 'A'"
 
     # ---------------------------------------------------------
     # 4) Branch B: explores directory structure
@@ -61,6 +64,7 @@ dag:
       params:
         command: "echo 'Branch B: Directory structure'; ls -d */ 2>/dev/null || echo 'No directories'"
       dependencies: ["bash_condition"]
+      condition: "output_of('bash_condition') == 'B'"
 
     # ---------------------------------------------------------
     # 5) Merge: both branches must complete before continuing
