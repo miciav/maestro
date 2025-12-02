@@ -25,7 +25,7 @@ class BashTask(BaseTask):
             bufsize=1
         )
 
-        captured_output = None  # <--- nuovo!
+        captured_output = None
 
         # STDOUT
         for line in process.stdout:
@@ -43,14 +43,11 @@ class BashTask(BaseTask):
             )
 
             # NEW: detect structured output: OUTPUT: ...
-            if clean.lstrip().startswith("OUTPUT:"):
-                value = clean[len("OUTPUT:"):].strip()
-                captured_output = value
 
-                raw = clean.lstrip()
-                if raw.startswith("OUTPUT:"):
-                    value = raw.split("OUTPUT:", 1)[1].strip()
-                    captured_output = value
+            raw = clean.lstrip()
+            if raw.startswith("OUTPUT:"):
+                value = raw.split("OUTPUT:", 1)[1].strip()
+                captured_output = value
 
         # Leggi STDERR riga per riga
         for line in process.stderr:
@@ -85,7 +82,7 @@ class BashTask(BaseTask):
 
         # NEW — persist captured output (if present)
         if captured_output is not None:
-            sm.set_task_output(dag_id, execution_id, task_id, captured_output)
+            sm.set_task_output(dag_id, task_id, execution_id, captured_output)
 
         # Success log finale
         success_msg = "[BashTask] Completed successfully (exit code 0)"

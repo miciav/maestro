@@ -182,9 +182,22 @@ class StatusManager:
         dag_id: str,
         task_id: str,
         execution_id: str,
-        output: Any
-    ):
-        """Store JSON-serializable output for a task."""
+        output: Any,
+    ) -> None:
+        """
+        Salva l'output di un task nella colonna `output` della tabella tasks.
+
+        NOTA IMPORTANTE:
+        - NON crea nuove righe nella tabella tasks.
+        - Aggiorna SOLO il record esistente identificato da
+          (dag_id, task_id, execution_id).
+        """
+        # serializza in JSON se è dict/list, altrimenti stringa semplice
+        if isinstance(output, (dict, list)):
+            encoded = json.dumps(output)
+        else:
+            encoded = str(output)
+
         with self.Session.begin() as session:
             task = (
                 session.query(TaskORM)
@@ -193,17 +206,12 @@ class StatusManager:
             )
 
             if not task:
-                # Should never happen if initialization is correct,
-                # but we allow automatic creation for safety.
-                task = TaskORM(
-                    dag_id=dag_id,
-                    id=task_id,
-                    execution_id=execution_id,
-                    status="pending",
-                )
-                session.add(task)
+                # Non creiamo una nuova riga qui: se non troviamo il task,
+                # c'è qualcosa di incoerente a monte.
+                # Volendo, potresti loggare un warning.
+                return
 
-            task.output = json.dumps(output)
+            task.output = encoded
 
     # ----------------------------------------------------------------------
     # Metodo: get_task_status

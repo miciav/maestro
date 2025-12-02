@@ -1,15 +1,11 @@
 abstract: |
   This difficult-level DAG models a "matrix" of conditional-style branching.
-  From a single Python-based root evaluation, the DAG fans out into four
-  independent branches. Each branch contains a 3-step mini-pipeline mixing
-  PythonTask, BashTask, and PrintTask.
+  From a single Python-based root evaluation, the DAG fans out into four independent branches. Each branch contains a 3-step mini-pipeline mixing PythonTask, BashTask, and PrintTask.
 
-  All four branches run in parallel after the root task and must complete
-  before the final PrintTask is executed. This structure is ideal for:
+  All four branches run in parallel after the root task and must complete before the final PrintTask is executed. This structure is ideal for:
     - Stress-testing fan-out and fan-in synchronization
     - Exercising both Bash and Python executors under concurrent load
-    - Verifying that logging and task ordering remain understandable in
-      complex, parallel DAGs.
+    - Verifying that logging and task ordering remain understandable in complex, parallel DAGs.
 
 dag:
   name: "conditional_branching_matrix"
@@ -22,10 +18,12 @@ dag:
     - task_id: "root"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random
-          value = random.random()
-          print(f"Root evaluated value: {value}")
+          branches = ['1', '2', '3', '4']
+          branch = random.choice(branches)
+          print(f"Root evaluated value: {branch}")
+          task_output = {"branch": branch}
       dependencies: []
 
     # ---------------------------------------------------------
@@ -35,10 +33,11 @@ dag:
     - task_id: "b1_1"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           nums = [1, 2, 3]
           print("Branch 1 - step 1, nums:", nums)
       dependencies: ["root"]
+      condition: "output_of('evaluate_condition')['branch'] == '1'"
 
     - task_id: "b1_2"
       type: "BashTask"
@@ -61,11 +60,12 @@ dag:
       params:
         command: "echo 'Branch 2 - step 1, listing current dir'; ls -1 | head -n 5"
       dependencies: ["root"]
+      condition: "output_of('evaluate_condition')['branch'] == '2'"
 
     - task_id: "b2_2"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Branch 2 - step 2, post-processing Bash output logically.")
       dependencies: ["b2_1"]
 
@@ -82,10 +82,11 @@ dag:
     - task_id: "b3_1"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           words = ["alpha", "beta", "gamma"]
           print("Branch 3 - step 1, words:", words)
       dependencies: ["root"]
+      condition: "output_of('evaluate_condition')['branch'] == '3'"
 
     - task_id: "b3_2"
       type: "BashTask"
@@ -108,11 +109,12 @@ dag:
       params:
         command: "echo 'Branch 4 - step 1, checking date'; date"
       dependencies: ["root"]
+      condition: "output_of('evaluate_condition')['branch'] == '4'"
 
     - task_id: "b4_2"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Branch 4 - step 2, Python confirming time was printed above.")
       dependencies: ["b4_1"]
 

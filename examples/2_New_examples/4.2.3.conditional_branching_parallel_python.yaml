@@ -38,10 +38,13 @@ dag:
     - task_id: "evaluate_condition"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random
-          condition = "A" if random.random() > 0.5 else "B"
+          random_value = round(random.random(), 2)
+          print("Value:", random_value)
+          condition = "A" if random_value > 0.5 else "B"
           print(f"Condition evaluated: {condition}")
+          task_output = {"branch": condition}
       dependencies: ["init"]
 
     # ---------------------------------------------------------
@@ -50,12 +53,13 @@ dag:
     - task_id: "branch_a_process"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import math
           nums = [1, 2, 3, 4, 5]
           squares = [n*n for n in nums]
           print("Branch A squares:", squares)
       dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'A'"
 
     # ---------------------------------------------------------
     # 4) Branch B — simple text processing.
@@ -63,11 +67,12 @@ dag:
     - task_id: "branch_b_process"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           words = ["alpha", "beta", "gamma"]
           upper = [w.upper() for w in words]
           print("Branch B uppercase:", upper)
       dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'B'"
 
     # ---------------------------------------------------------
     # 5) Final merge.

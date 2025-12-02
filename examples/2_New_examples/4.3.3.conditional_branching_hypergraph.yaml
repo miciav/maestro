@@ -37,10 +37,12 @@ dag:
     - task_id: "evaluate_condition"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           import random
-          cond = random.choice(["X", "Y", "Z"])
+          branches = ["A", "B", "C"]
+          cond = random.choice(branches)
           print(f"Condition evaluated: {cond}")
+          task_output = {"branch": cond}
       dependencies: ["init"]
 
     # =========================================================
@@ -51,9 +53,10 @@ dag:
     - task_id: "A1"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Branch A - Step 1")
       dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'A'"
 
     - task_id: "A2"
       type: "BashTask"
@@ -67,11 +70,12 @@ dag:
       params:
         command: "echo 'Branch B - Step 1'"
       dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'B'"
 
     - task_id: "B2"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Branch B - Step 2")
       dependencies: ["B1"]
 
@@ -79,9 +83,10 @@ dag:
     - task_id: "C1"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("Branch C - Step 1")
       dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'C'"
 
     - task_id: "C2"
       type: "BashTask"
@@ -119,21 +124,21 @@ dag:
     - task_id: "T1"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("T1: Post-merge computation A+B")
       dependencies: ["merge_AB"]
 
     - task_id: "T2"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("T2: Post-merge computation B+C")
       dependencies: ["merge_BC"]
 
     - task_id: "T3"
       type: "PythonTask"
       params:
-        script: |
+        code: |
           print("T3: Post-merge computation C+A")
       dependencies: ["merge_CA"]
 
