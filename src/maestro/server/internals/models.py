@@ -39,6 +39,7 @@ class TaskORM(Base):
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
     thread_id = Column(String)
+    output = Column(Text)
     insertion_order = Column(Integer)
     execution = relationship("ExecutionORM", back_populates="tasks")
 
