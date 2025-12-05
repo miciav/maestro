@@ -1,10 +1,12 @@
-import subprocess
 import logging
-from maestro.server.tasks.base import BaseTask
+import subprocess
+
 from maestro.server.internals.status_manager import StatusManager
+from maestro.server.tasks.base import BaseTask
 
 logger = logging.getLogger(__name__)
 logger.propagate = True
+
 
 class BashTask(BaseTask):
     command: str
@@ -22,7 +24,7 @@ class BashTask(BaseTask):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            bufsize=1
+            bufsize=1,
         )
 
         captured_output = None
@@ -39,7 +41,7 @@ class BashTask(BaseTask):
                 execution_id=execution_id,
                 task_id=task_id,
                 message=msg,
-                level="INFO"
+                level="INFO",
             )
 
             # NEW: detect structured output: OUTPUT: ...
@@ -61,7 +63,7 @@ class BashTask(BaseTask):
                 execution_id=execution_id,
                 task_id=task_id,
                 message=msg,
-                level="ERROR"
+                level="ERROR",
             )
 
         # Attendi la fine del processo
@@ -76,24 +78,13 @@ class BashTask(BaseTask):
                 execution_id=execution_id,
                 task_id=task_id,
                 message=msg,
-                level="ERROR"
+                level="ERROR",
             )
             raise Exception(f"BashTask failed with exit code {rc}")
 
         # NEW — persist captured output (if present)
         if captured_output is not None:
             sm.set_task_output(dag_id, task_id, execution_id, captured_output)
-
-        # Success log finale
-        success_msg = "[BashTask] Completed successfully (exit code 0)"
-        print(success_msg, flush=True)
-        sm.add_log(
-            dag_id=dag_id,
-            execution_id=execution_id,
-            task_id=task_id,
-            message=success_msg,
-            level="INFO"
-        )
 
     def to_dict(self):
         """Include the command field in serialized form."""
