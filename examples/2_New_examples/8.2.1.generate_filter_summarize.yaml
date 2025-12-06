@@ -46,7 +46,7 @@ dag:
               data = [int(x) for x in f.read().split()]
 
           if data:
-              print("High numbers summary: min =", min(data), "max =", max(data), "avg =", sum(data)/len(data))
+              print("High numbers summary: min =", min(data), "max =", max(data), "avg =", round(sum(data)/len(data), 2))
           else:
               print("No high numbers found.")
       dependencies: ["filter_numbers"]
