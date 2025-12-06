@@ -21,3 +21,8 @@ dag:
       message: "Eseguo branch B"
       dependencies: [check_condition]
       condition: "output_of('check_condition')['branch'] == 'branch_b'"
+    - task_id: end_message
+      type: "PrintTask"
+      params:
+        message: "End of DAG - success"
+      dependencies: [branch_a, branch_b]

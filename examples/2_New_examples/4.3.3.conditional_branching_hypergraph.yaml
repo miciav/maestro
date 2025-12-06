@@ -54,21 +54,21 @@ dag:
       type: "PythonTask"
       params:
         code: |
-          print("Branch A - Step 1")
+          print("Branch A - Step 1 completed")
       dependencies: ["evaluate_condition"]
       condition: "output_of('evaluate_condition')['branch'] == 'A'"
 
     - task_id: "A2"
       type: "BashTask"
       params:
-        command: "echo 'Branch A - Step 2'"
+        command: "echo 'Branch A - Step 2 completed'"
       dependencies: ["A1"]
 
     # -------- BRANCH B --------
     - task_id: "B1"
       type: "BashTask"
       params:
-        command: "echo 'Branch B - Step 1'"
+        command: "echo 'Branch B - Step 1 completed'"
       dependencies: ["evaluate_condition"]
       condition: "output_of('evaluate_condition')['branch'] == 'B'"
 
@@ -76,7 +76,7 @@ dag:
       type: "PythonTask"
       params:
         code: |
-          print("Branch B - Step 2")
+          print("Branch B - Step 2 completed")
       dependencies: ["B1"]
 
     # -------- BRANCH C --------
@@ -84,14 +84,14 @@ dag:
       type: "PythonTask"
       params:
         code: |
-          print("Branch C - Step 1")
+          print("Branch C - Step 1 completed")
       dependencies: ["evaluate_condition"]
       condition: "output_of('evaluate_condition')['branch'] == 'C'"
 
     - task_id: "C2"
       type: "BashTask"
       params:
-        command: "echo 'Branch C - Step 2'"
+        command: "echo 'Branch C - Step 2 completed'"
       dependencies: ["C1"]
 
     # =========================================================

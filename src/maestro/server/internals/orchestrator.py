@@ -450,7 +450,7 @@ class Orchestrator:
                                 self._cancel_running_tasks(running_tasks)
                                 raise Exception(f"Task {task_id} failed: {e}")
 
-                # Build upstream status dict
+                # Build upstream status dict (simple string statuses)
                 upstream_statuses = {tid: "completed" for tid in completed_tasks}
                 upstream_statuses.update({tid: "failed" for tid in failed_tasks})
                 upstream_statuses.update({tid: "skipped" for tid in skipped_tasks})
@@ -460,7 +460,11 @@ class Orchestrator:
                 # Loop sui task pending
                 for task_id in list(pending_tasks):
                     task = dag.tasks[task_id]
-                    action = evaluate_dependencies(task, upstream_statuses)
+
+                    # Call evaluate_dependencies with StatusManager + ids so it can evaluate condition/output_of()
+                    action = evaluate_dependencies(
+                        task, upstream_statuses, sm, dag_id, execution_id
+                    )
 
                     if action == "run":
                         # Submit task for execution
@@ -478,17 +482,21 @@ class Orchestrator:
                         pending_tasks.remove(task_id)
 
                     elif action == "wait":
-                        continue  # lascia in pending
+                        # leave in pending; continue to next task
+                        continue
 
                     elif action == "skip":
+                        # mark skipped in memory and persist
                         task.status = TaskStatus.SKIPPED
                         sm.set_task_status(dag_id, task_id, "skipped", execution_id)
                         skipped_tasks.add(task_id)
-                        pending_tasks.remove(task_id)
+                        if task_id in pending_tasks:
+                            pending_tasks.remove(task_id)
                         if status_callback:
                             status_callback()
+                        self.logger.info(f"Task {task_id} skipped (policy/condition)")
 
-                # Evita busy-waiting
+                # Evita busy-waiting: aspetta un breve intervallo se ci sono task attivi
                 if pending_tasks or running_tasks:
                     threading.Event().wait(0.05)
 
@@ -837,42 +845,98 @@ class Orchestrator:
         return stopped_count
 
 
-def evaluate_dependencies(task: BaseTask, upstream_statuses: Dict[str, str]) -> str:
+def evaluate_dependencies(
+    task: BaseTask,
+    upstream_statuses: Dict[str, str],
+    sm,
+    dag_id: str,
+    execution_id: str,
+) -> str:
     """
-    Decide lo stato della task in base alle dipendenze.
-
-    Parametri:
-        task: il task da valutare
-        upstream_statuses: dict {task_id: TaskStatus} dei task upstream
+    Decide lo stato della task in base a:
+    - dependency_policy (all/any)
+    - stato delle dipendenze
+    - condition dinamica basata sugli output delle task upstream
 
     Ritorna:
-        "run" -> tutte le condizioni soddisfatte, task pronta a partire
+        "run"  -> task eseguibile
         "wait" -> task deve attendere
         "skip" -> task deve essere skippata
     """
     policy = getattr(task, "dependency_policy", "none")
     dependencies = getattr(task, "dependencies", [])
+    condition = getattr(task, "condition", None)
 
-    if not dependencies or policy == "none":
+    # ---------------------------------------------------------
+    # 1) Se la task NON ha dipendenze e NON ha condition → RUN
+    # ---------------------------------------------------------
+    if not dependencies and not condition:
         return "run"
 
-    statuses = [upstream_statuses.get(dep) for dep in dependencies]
+    # ---------------------------------------------------------
+    # 2) Gestione dipendenze
+    # ---------------------------------------------------------
+    if dependencies and policy != "none":
+        statuses = [upstream_statuses.get(dep) for dep in dependencies]
 
-    if policy == "all":
-        if any(s is None or s in ("pending", "running") for s in statuses):
+        # Se qualche dipendenza non è ancora nota → WAIT
+        if any(s is None for s in statuses):
             return "wait"
-        if all(s == "completed" for s in statuses):
-            return "run"
-        # Se una dipendenza ha fallito, skip task
-        if any(s == "failed" for s in statuses):
+
+        # ---- policy ALL ----
+        if policy == "all":
+            # Se una è pending/running → WAIT
+            if any(s in ("pending", "running") for s in statuses):
+                return "wait"
+
+            # Se tutte sono completed → OK, continua
+            if all(s == "completed" for s in statuses):
+                pass
+            else:
+                # altrimenti se una è failed → SKIP
+                if any(s == "failed" for s in statuses):
+                    return "skip"
+                # se una è skipped → SKIP
+                if any(s == "skipped" for s in statuses):
+                    return "skip"
+
+        # ---- policy ANY ----
+        elif policy == "any":
+            # Se almeno una completed → OK, continua
+            if any(s == "completed" for s in statuses):
+                pass
+            else:
+                # tutte pending/running/None → WAIT
+                if all(s in ("pending", "running") for s in statuses):
+                    return "wait"
+
+                # Se tutte failed o skipped → SKIP
+                if all(s in ("failed", "skipped") for s in statuses):
+                    return "skip"
+
+    # ---------------------------------------------------------
+    # 3) Gestione condition basata sugli output
+    # ---------------------------------------------------------
+    if condition:
+        try:
+            # Helper per leggere gli output delle task upstream
+            def output_of(tid):
+                return sm.get_task_output(dag_id, tid, execution_id)
+
+            env = {"output_of": output_of}
+
+            cond_result = eval(condition, {}, env)
+
+            if not cond_result:
+                return "skip"
+
+        except Exception as e:
+            print(
+                f"[evaluate_dependencies] Error evaluating condition for {task.task_id}: {e}"
+            )
             return "skip"
 
-    elif policy == "any":
-        if any(s == "completed" for s in statuses):
-            return "run"
-        if all(s in ("pending", "running", None) for s in statuses):
-            return "wait"
-        if all(s in ("failed", "skipped") for s in statuses):
-            return "skip"
-
+    # ---------------------------------------------------------
+    # 4) Se tutto è OK → RUN
+    # ---------------------------------------------------------
     return "run"
