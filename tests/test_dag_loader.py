@@ -7,6 +7,7 @@ from pydantic import Field
 from maestro.server.internals.dag_loader import DAGLoader
 from maestro.server.internals.task_registry import TaskRegistry
 from maestro.server.tasks.base import BaseTask
+from maestro.server.tasks.print_task import PrintTask
 from maestro.shared.dag import DAG
 
 
@@ -261,3 +262,58 @@ def test_load_dag_from_dict_multiple_tasks(dag_loader, mock_task_registry):
     # Ora accediamo ai task correttamente (dag.tasks è dict)
     task_ids = {task.task_id for task in dag.tasks.values()}
     assert task_ids == {"task1", "task2", "task3"}
+
+
+# -----------------------------
+# Test per dependency_policy nel task
+# -----------------------------
+def test_dependency_policy_loaded_from_yaml(tmp_path):
+    # Registry
+    registry = TaskRegistry()
+    registry.register("PrintTask", PrintTask)
+
+    # File YAML
+    yaml_path = tmp_path / "dag_test.yaml"
+    yaml_path.write_text(
+        """
+        dag:
+        tasks:
+            - task_id: task1
+            type: PrintTask
+            message: "Hello"
+            dependency_policy: any
+        """
+    )
+
+    loader = DAGLoader(registry)
+    dag = loader.load_dag_from_file(str(yaml_path))
+
+    # Access diretto al dict
+    t1 = dag.tasks["task1"]
+
+    assert t1.dependency_policy.value == "any"  # NB: è un Enum
+
+
+def test_dependency_policy_default(tmp_path):
+    registry = TaskRegistry()
+    registry.register("PrintTask", PrintTask)
+
+    yaml_path = tmp_path / "dag_test2.yaml"
+    yaml_path.write_text(
+        """
+        dag:
+        tasks:
+            - task_id: t2
+            type: PrintTask
+            message: "Test"
+        """
+    )
+
+    loader = DAGLoader(registry)
+    dag = loader.load_dag_from_file(str(yaml_path))
+
+    t2 = dag.tasks["t2"]
+
+    # Default impostato in BaseTask
+    assert t2.dependency_policy == t2.dependency_policy.__class__.ANY
+    assert t2.dependency_policy.value == "any"
