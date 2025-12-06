@@ -1,20 +1,24 @@
-import yaml
-from typing import Dict, Any, Type, Optional
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional, Type
+
+import yaml
 from pydantic import BaseModel, ValidationError
 
+from maestro.server.internals.task_registry import TaskRegistry
+from maestro.server.tasks.base import BaseTask
 from maestro.shared.dag import DAG
 from maestro.shared.task import Task, TaskStatus
-from maestro.server.tasks.base import BaseTask
-from maestro.server.internals.task_registry import TaskRegistry
+
 
 class DAGConfig(BaseModel):
     """Schema for DAG configuration validation."""
+
     dag: Dict[str, Any]
 
     class Config:
         extra = "allow"
+
 
 class DAGLoader:
     def __init__(self, task_registry: TaskRegistry):
@@ -40,20 +44,20 @@ class DAGLoader:
         # Extract scheduling configuration
         start_time = None
         cron_schedule = None
-        
+
         if "start_time" in config.dag and "cron_schedule" in config.dag:
             raise ValueError("Cannot specify both start_time and cron_schedule")
-        
+
         if "start_time" in config.dag:
             start_time_str = config.dag["start_time"]
             try:
                 start_time = self._parse_datetime(start_time_str)
             except ValueError as e:
                 raise ValueError(f"Invalid start_time format: {e}")
-        
+
         if "cron_schedule" in config.dag:
             cron_schedule = config.dag["cron_schedule"]
-        
+
         dag = DAG(dag_id=dag_id, start_time=start_time, cron_schedule=cron_schedule)
         dag_config = config.dag
 
@@ -66,7 +70,9 @@ class DAGLoader:
                 task = self._create_task_from_config(task_config, filepath)
                 dag.add_task(task)
             except Exception as e:
-                raise ValueError(f"Error creating task '{task_config.get('task_id', 'unknown')}': {e}")
+                raise ValueError(
+                    f"Error creating task '{task_config.get('task_id', 'unknown')}': {e}"
+                )
 
         try:
             dag.validate()
@@ -75,7 +81,9 @@ class DAGLoader:
 
         return dag
 
-    def _create_task_from_config(self, task_config: Dict[str, Any], dag_file_path: str) -> BaseTask:
+    def _create_task_from_config(
+        self, task_config: Dict[str, Any], dag_file_path: str
+    ) -> BaseTask:
         """Create a task instance from configuration."""
         task_config = task_config.copy()  # Don't modify original
 
@@ -110,26 +118,28 @@ class DAGLoader:
             return task_class(**task_config)
         except Exception as e:
             raise ValueError(f"Error instantiating {task_type_name}: {e}")
-    
+
     def _parse_datetime(self, datetime_str: str) -> datetime:
         """Parse datetime string in various formats."""
         # Common datetime formats to try
         formats = [
-            "%Y-%m-%d %H:%M:%S",    # 2023-12-25 14:30:00
-            "%Y-%m-%dT%H:%M:%S",    # 2023-12-25T14:30:00 (ISO format)
-            "%Y-%m-%dT%H:%M:%SZ",   # 2023-12-25T14:30:00Z (UTC)
-            "%Y-%m-%d %H:%M",       # 2023-12-25 14:30
-            "%Y-%m-%dT%H:%M",       # 2023-12-25T14:30
-            "%Y-%m-%d",             # 2023-12-25 (assumes 00:00:00)
+            "%Y-%m-%d %H:%M:%S",  # 2023-12-25 14:30:00
+            "%Y-%m-%dT%H:%M:%S",  # 2023-12-25T14:30:00 (ISO format)
+            "%Y-%m-%dT%H:%M:%SZ",  # 2023-12-25T14:30:00Z (UTC)
+            "%Y-%m-%d %H:%M",  # 2023-12-25 14:30
+            "%Y-%m-%dT%H:%M",  # 2023-12-25T14:30
+            "%Y-%m-%d",  # 2023-12-25 (assumes 00:00:00)
         ]
-        
+
         for fmt in formats:
             try:
                 return datetime.strptime(datetime_str, fmt)
             except ValueError:
                 continue
-        
-        raise ValueError(f"Unable to parse datetime string '{datetime_str}'. Supported formats: {formats}")
+
+        raise ValueError(
+            f"Unable to parse datetime string '{datetime_str}'. Supported formats: {formats}"
+        )
 
     def load_dag_from_dict(self, dag_dict: Dict[str, Any]) -> DAG:
         """Load a DAG from a dictionary representation."""
@@ -142,21 +152,23 @@ class DAGLoader:
 
         # Get tasks from the dictionary
         tasks = dag_dict.get("tasks", {})
-        
+
         # Handle tasks as a dictionary (from to_dict())
         for task_id, task_config in tasks.items():
             if isinstance(task_config, dict):
                 # Add task_id to the config if not present
                 if "task_id" not in task_config:
                     task_config["task_id"] = task_id
-                    
+
                 # Ensure type field exists (from the serialized task model)
                 # The type might be stored as the class name without 'Task' suffix
                 if "type" not in task_config and task_config.get("task_id"):
                     # Try to infer type from other fields or use a default
                     if "playbook" in task_config:
                         task_config["type"] = "AnsibleTask"
-                    elif "working_dir" in task_config and "workflow_mode" in task_config:
+                    elif (
+                        "working_dir" in task_config and "workflow_mode" in task_config
+                    ):
                         task_config["type"] = "ExtendedTerraformTask"
                     elif "message" in task_config:
                         task_config["type"] = "PrintTask"
@@ -169,7 +181,7 @@ class DAGLoader:
                         task_config["type"] = "PrintTask"
                         if "message" not in task_config:
                             task_config["message"] = f"Task {task_id}"
-                
+
                 task = self._create_task_from_config(task_config, None)
                 dag.add_task(task)
 
