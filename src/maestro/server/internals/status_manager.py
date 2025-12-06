@@ -169,7 +169,10 @@ class StatusManager:
             if not task:
                 task = TaskORM(dag_id=dag_id, id=task_id, execution_id=execution_id)
                 session.add(task)
+
             task.status = status
+            task.thread_id = str(threading.current_thread().ident)
+
             if status == "running":
                 task.started_at = datetime.now()
             elif status in ["completed", "failed", "cancelled", "skipped"]:
@@ -251,12 +254,7 @@ class StatusManager:
 
     # ----------------------------------------------------------------------
     # Metodo: get_task_output
-    def get_task_output(
-        self,
-        dag_id: str,
-        task_id: str,
-        execution_id: str
-    ) -> Any:
+    def get_task_output(self, dag_id: str, task_id: str, execution_id: str) -> Any:
         """Return the decoded output of a task, or None if not found."""
         with self.Session() as session:
             task = (
