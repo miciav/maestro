@@ -1,31 +1,29 @@
 import logging
-import uuid
-import threading
-from datetime import datetime
 import re
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, Future, as_completed
-from typing import Any, Type, Dict, Optional, Set, List
+import uuid
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
+from apscheduler.schedulers.background import BackgroundScheduler
 from rich import get_console
 from rich.logging import RichHandler
 
+from maestro.server.internals.dag_loader import DAGLoader
+from maestro.server.internals.executors.factory import ExecutorFactory
+from maestro.server.internals.status_manager import StatusManager
+from maestro.server.internals.task_registry import TaskRegistry
+from maestro.server.tasks.base import BaseTask
 from maestro.shared.dag import DAG, DAGStatus
 from maestro.shared.task import TaskStatus
-from maestro.server.tasks.base import BaseTask
-from maestro.server.internals.task_registry import TaskRegistry
-from maestro.server.internals.dag_loader import DAGLoader
-from maestro.server.internals.status_manager import StatusManager
-
-from maestro.server.internals.executors.factory import ExecutorFactory
-
-from apscheduler.schedulers.background import BackgroundScheduler
 
 
 class DatabaseLogHandler(logging.Handler):
     """Thread-safe logging handler that writes task logs to StatusManager."""
 
-    _ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+    _ansi_escape = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
     def __init__(self, status_manager: StatusManager):
         super().__init__()
@@ -79,7 +77,7 @@ class DatabaseLogHandler(logging.Handler):
                     task_id=task_id or "system",
                     level=record.levelname,
                     message=msg,
-                    timestamp=timestamp
+                    timestamp=timestamp,
                 )
 
         except Exception:
@@ -93,7 +91,7 @@ class Orchestrator:
         self,
         log_level: str = "INFO",
         status_manager: Optional[StatusManager] = None,
-        db_path: Optional[str] = "maestro.db"
+        db_path: Optional[str] = "maestro.db",
     ):
         self.task_registry = TaskRegistry()
         self.dag_loader = DAGLoader(self.task_registry)
@@ -114,7 +112,6 @@ class Orchestrator:
         self.executor = ThreadPoolExecutor(max_workers=10)
         self._execution_stop_events: Dict[str, threading.Event] = {}
         self.task_executor = ThreadPoolExecutor(max_workers=10)
-
 
     def _setup_logging(self, log_level: str):
         """Setup global logging with RichHandler (console) and prepare DB handler."""
@@ -144,7 +141,6 @@ class Orchestrator:
         self.db_handler = DatabaseLogHandler(self.status_manager)
         self.db_handler.setLevel(logging.DEBUG)
 
-
     def register_task_type(self, name: str, task_class: Type[BaseTask]):
         """Register a custom task type."""
         self.task_registry.register(name, task_class)
@@ -157,18 +153,20 @@ class Orchestrator:
     def schedule_dag(self, dag: DAG):
         """Schedules a DAG to run based on its cron schedule."""
         if not dag.cron_schedule:
-            self.logger.warning(f"DAG {dag.dag_id} has no cron schedule. Cannot schedule.")
+            self.logger.warning(
+                f"DAG {dag.dag_id} has no cron schedule. Cannot schedule."
+            )
             return
 
         job_id = f"dag:{dag.dag_id}"
         self.scheduler.add_job(
             self.execute_scheduled_dag,
-            trigger='cron',
+            trigger="cron",
             id=job_id,
             name=dag.dag_id,
             args=[dag.dag_id],
             replace_existing=True,
-            **dag.cron_schedule_to_aps_kwargs()
+            **dag.cron_schedule_to_aps_kwargs(),
         )
         self.logger.info(f"DAG {dag.dag_id} scheduled with cron: {dag.cron_schedule}")
 
@@ -186,7 +184,9 @@ class Orchestrator:
         self.logger.info(f"Scheduler triggered for DAG: {dag_id}")
         dag_filepath = self.status_manager.get_dag_filepath(dag_id)
         if not dag_filepath:
-            self.logger.error(f"No file path found for scheduled DAG {dag_id}. Cannot execute.")
+            self.logger.error(
+                f"No file path found for scheduled DAG {dag_id}. Cannot execute."
+            )
             return
 
         try:
@@ -202,7 +202,7 @@ class Orchestrator:
         resume: bool = False,
         fail_fast: bool = True,
         status_callback=None,
-        dag_filepath: Optional[str] = None  # Add this parameter
+        dag_filepath: Optional[str] = None,  # Add this parameter
     ) -> str:
         """Execute DAG in a separate thread with concurrency."""
         # Use provided execution_id or generate a new one
@@ -225,11 +225,15 @@ class Orchestrator:
                 # Tasks should already exist for this execution, don't reinitialize
             else:
                 # Create new execution
-                sm.create_dag_execution(dag.dag_id, execution_id, dag_filepath=dag_filepath)
+                sm.create_dag_execution(
+                    dag.dag_id, execution_id, dag_filepath=dag_filepath
+                )
                 # Initialize all tasks with pending status only if not resuming
                 if not resume:
                     task_ids = list(dag.tasks.keys())
-                    sm.initialize_tasks_for_execution(dag.dag_id, execution_id, task_ids)
+                    sm.initialize_tasks_for_execution(
+                        dag.dag_id, execution_id, task_ids
+                    )
 
         # the body of the thread
         def execute():
@@ -240,7 +244,7 @@ class Orchestrator:
                     resume=resume,
                     fail_fast=fail_fast,
                     status_callback=status_callback,
-                    stop_event=stop_event
+                    stop_event=stop_event,
                 )
 
                 # After execution, check the final status of tasks
@@ -248,20 +252,30 @@ class Orchestrator:
                     final_statuses = sm.get_dag_status(dag.dag_id, execution_id)
 
                     # Count task statuses
-                    has_failed = any(status == "failed" for status in final_statuses.values())
-                    has_running = any(status == "running" for status in final_statuses.values())
+                    has_failed = any(
+                        status == "failed" for status in final_statuses.values()
+                    )
+                    has_running = any(
+                        status == "running" for status in final_statuses.values()
+                    )
 
                     # Determine overall DAG status
                     if has_running:
                         # Should not happen after execution completes, but handle it
                         dag.status = DAGStatus.RUNNING
-                        sm.update_dag_execution_status(dag.dag_id, execution_id, "running")
+                        sm.update_dag_execution_status(
+                            dag.dag_id, execution_id, "running"
+                        )
                     elif has_failed:
                         dag.status = DAGStatus.FAILED
-                        sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
+                        sm.update_dag_execution_status(
+                            dag.dag_id, execution_id, "failed"
+                        )
                     else:
                         dag.status = DAGStatus.COMPLETED
-                        sm.update_dag_execution_status(dag.dag_id, execution_id, "completed")
+                        sm.update_dag_execution_status(
+                            dag.dag_id, execution_id, "completed"
+                        )
 
             except Exception as e:
                 with self.status_manager as sm:
@@ -291,7 +305,7 @@ class Orchestrator:
         status_manager=None,
         progress_tracker=None,
         status_callback=None,
-        stop_event: Optional[threading.Event] = None
+        stop_event: Optional[threading.Event] = None,
     ):
         """Execute DAG with concurrent task execution."""
         dag_id = dag.dag_id
@@ -305,14 +319,14 @@ class Orchestrator:
             db_handler = self.db_handler
 
             task_loggers = [
-                'maestro.server.tasks.terraform_task',
-                'maestro.server.tasks.extended_terraform_task',
-                'maestro.server.tasks.print_task',
-                'maestro.server.tasks.python_task',
-                'maestro.server.tasks.bash_task',
-                'maestro.core.executors.ssh',
-                'maestro.core.executors.docker',
-                'maestro.core.executors.local',
+                "maestro.server.tasks.terraform_task",
+                "maestro.server.tasks.extended_terraform_task",
+                "maestro.server.tasks.print_task",
+                "maestro.server.tasks.python_task",
+                "maestro.server.tasks.bash_task",
+                "maestro.core.executors.ssh",
+                "maestro.core.executors.docker",
+                "maestro.core.executors.local",
             ]
 
             for logger_name in task_loggers:
@@ -342,7 +356,7 @@ class Orchestrator:
                 status_callback=status_callback,
                 progress_tracker=progress_tracker,
                 stop_event=stop_event,
-                db_handler=db_handler
+                db_handler=db_handler,
             )
 
         finally:
@@ -353,7 +367,6 @@ class Orchestrator:
                     if db_handler in logger.handlers:
                         logger.removeHandler(db_handler)
 
-
     def _run_dag_concurrent(
         self,
         dag: DAG,
@@ -363,7 +376,7 @@ class Orchestrator:
         status_callback,
         progress_tracker,
         stop_event: Optional[threading.Event],
-        db_handler
+        db_handler,
     ):
         """Execute DAG tasks concurrently based on dependencies."""
         dag_id = dag.dag_id
@@ -381,7 +394,9 @@ class Orchestrator:
                 for task_id in list(pending_tasks):
                     task_status = sm.get_task_status(dag_id, task_id, execution_id)
                     if task_status == "completed":
-                        self.logger.info(f"Task {task_id} already completed (resume mode)")
+                        self.logger.info(
+                            f"Task {task_id} already completed (resume mode)"
+                        )
                         dag.tasks[task_id].status = TaskStatus.COMPLETED
                         completed_tasks.add(task_id)
                         pending_tasks.remove(task_id)
@@ -394,9 +409,16 @@ class Orchestrator:
             while pending_tasks or running_tasks:
                 # Check for cancellation
                 if stop_event and stop_event.is_set():
-                    self.logger.info(f"DAG {dag_id} execution {execution_id} was cancelled")
+                    self.logger.info(
+                        f"DAG {dag_id} execution {execution_id} was cancelled"
+                    )
                     self._handle_cancellation(
-                        dag, execution_id, pending_tasks, running_tasks, sm, status_callback
+                        dag,
+                        execution_id,
+                        pending_tasks,
+                        running_tasks,
+                        sm,
+                        status_callback,
                     )
                     break
 
@@ -432,7 +454,9 @@ class Orchestrator:
 
                     # Check if dependencies failed
                     if self._has_failed_dependencies(task, failed_tasks, skipped_tasks):
-                        self.logger.warning(f"Skipping task {task_id} because its dependencies failed")
+                        self.logger.warning(
+                            f"Skipping task {task_id} because its dependencies failed"
+                        )
                         task.status = TaskStatus.SKIPPED
                         sm.set_task_status(dag_id, task_id, "skipped", execution_id)
                         skipped_tasks.add(task_id)
@@ -450,7 +474,7 @@ class Orchestrator:
                         execution_id=execution_id,
                         status_callback=status_callback,
                         progress_tracker=progress_tracker,
-                        db_handler=db_handler
+                        db_handler=db_handler,
                     )
                     running_tasks[task_id] = future
                     pending_tasks.remove(task_id)
@@ -459,14 +483,13 @@ class Orchestrator:
                 if not ready_tasks and running_tasks:
                     threading.Event().wait(0.1)
 
-
     def _find_ready_tasks(
         self,
         dag: DAG,
         pending_tasks: Set[str],
         completed_tasks: Set[str],
         failed_tasks: Set[str],
-        skipped_tasks: Set[str]
+        skipped_tasks: Set[str],
     ) -> List[str]:
         """
         Find tasks that are ready to run.
@@ -522,12 +545,8 @@ class Orchestrator:
 
         return ready_tasks
 
-
     def _has_failed_dependencies(
-        self,
-        task,
-        failed_tasks: Set[str],
-        skipped_tasks: Set[str]
+        self, task, failed_tasks: Set[str], skipped_tasks: Set[str]
     ) -> bool:
         """
         A task is blocked ONLY if one of its dependencies FAILED.
@@ -536,7 +555,6 @@ class Orchestrator:
         branching with a final merge step, where only one branch runs.
         """
         return any(dep in failed_tasks for dep in task.dependencies)
-
 
     def _evaluate_condition(self, task, dag_id: str, execution_id: str) -> bool:
         """Evaluate the boolean condition of a task using output_of()."""
@@ -567,12 +585,14 @@ class Orchestrator:
             )
             return False
 
-        print("[DEBUG] condition eval:",
+        print(
+            "[DEBUG] condition eval:",
             task.task_id,
             expr,
             "output_of(check_condition)=",
             safe_evaluator_globals["output_of"]("check_condition"),
-            flush=True)
+            flush=True,
+        )
 
     def _execute_task_async(
         self,
@@ -581,9 +601,8 @@ class Orchestrator:
         execution_id: str,
         status_callback,
         progress_tracker,
-        db_handler
+        db_handler,
     ):
-
         """Execute a single task asynchronously WITH retry support."""
 
         task_id = task.task_id
@@ -655,7 +674,6 @@ class Orchestrator:
 
                 return  # task completata con successo → si esce
 
-
             except BaseException as e:
                 # IGNORA SOLO I SEGNALI CHE DEVONO DAVVERO FERMARE TUTTO
                 if isinstance(e, KeyboardInterrupt):
@@ -680,12 +698,10 @@ class Orchestrator:
                         status_callback()
                     raise Exception(f"Task {task_id} failed: {e}") from e
 
-
             finally:
                 # Pulizia del contesto di logging
                 if db_handler:
                     db_handler.clear_context()
-
 
     def _handle_cancellation(
         self,
@@ -694,7 +710,7 @@ class Orchestrator:
         pending_tasks: Set[str],
         running_tasks: Dict[str, Future],
         sm,
-        status_callback
+        status_callback,
     ):
         """Handle DAG cancellation."""
         # Cancel all running tasks
@@ -733,10 +749,14 @@ class Orchestrator:
             task = dag.tasks[task_id]
             status_color = self._get_status_color(task.status)
 
-            self.console.print(f"{i}. {task_id} ({task.status.value})", style=status_color)
+            self.console.print(
+                f"{i}. {task_id} ({task.status.value})", style=status_color
+            )
 
             if task.dependencies:
-                self.console.print(f"   Dependencies: {', '.join(task.dependencies)}", style="dim")
+                self.console.print(
+                    f"   Dependencies: {', '.join(task.dependencies)}", style="dim"
+                )
 
     def _get_status_color(self, status: TaskStatus) -> str:
         """Get color for task status."""
@@ -745,7 +765,7 @@ class Orchestrator:
             TaskStatus.RUNNING: "yellow",
             TaskStatus.COMPLETED: "green",
             TaskStatus.FAILED: "red",
-            TaskStatus.SKIPPED: "magenta"
+            TaskStatus.SKIPPED: "magenta",
         }
         return color_map.get(status, "white")
 
@@ -757,7 +777,7 @@ class Orchestrator:
             "running": 0,
             "completed": 0,
             "failed": 0,
-            "skipped": 0
+            "skipped": 0,
         }
 
         for task_id, task in dag.tasks.items():
@@ -765,14 +785,14 @@ class Orchestrator:
             tasks_status[task_id] = {
                 "status": status,
                 "dependencies": task.dependencies,
-                "type": task.__class__.__name__
+                "type": task.__class__.__name__,
             }
             summary[status] += 1
 
         return {
             "tasks": tasks_status,
             "summary": summary,
-            "total_tasks": len(dag.tasks)
+            "total_tasks": len(dag.tasks),
         }
 
     def cancel_dag_execution(self, dag_id: str, execution_id: str = None) -> bool:
@@ -808,8 +828,12 @@ class Orchestrator:
 
                 if self.cancel_dag_execution(dag_id, execution_id):
                     stopped_count += 1
-                    self.logger.info(f"Stopped DAG {dag_id} (execution: {execution_id})")
+                    self.logger.info(
+                        f"Stopped DAG {dag_id} (execution: {execution_id})"
+                    )
                 else:
-                    self.logger.warning(f"Failed to stop DAG {dag_id} (execution: {execution_id})")
+                    self.logger.warning(
+                        f"Failed to stop DAG {dag_id} (execution: {execution_id})"
+                    )
 
         return stopped_count

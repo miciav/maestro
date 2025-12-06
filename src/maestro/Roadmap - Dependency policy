@@ -1,0 +1,116 @@
+📍 Fase 1 — Modifica del modello delle task
+File da modificare:
+
+maestro/server/tasks/base.py
+
+Cosa fare:
+
+- aggiungere la Enum DependencyPolicy
+
+- aggiungere il campo Pydantic dependency_policy a BaseTask
+
+- impostare il valore di default scelto
+
+- aggiornare la descrizione nel model
+
+----------------------------------------------------------
+
+📍 Fase 2 — Caricamento DAG
+File da controllare/modificare:
+
+maestro/server/internals/dag_loader.py
+
+Cosa fare:
+
+verificare che il loader YAML passi correttamente il campo dependency_policy
+
+non dovrebbe servire nessuna modifica strutturale, perché Pydantic fa già il parse automatico
+
+ma va aggiunto 1–2 test case di DAG per confermare che funzioni
+
+----------------------------------------------------------
+
+📍 Fase 3 — Orchestratore: logica di scheduling
+File da modificare:
+
+maestro/server/internals/orchestrator.py
+
+In particolare, la sezione in cui l’orchestratore:
+
+- identifica le task in stato PENDING
+
+- controlla lo stato delle dipendenze
+
+- decide se mandarle in esecuzione
+
+Cosa fare:
+
+- aggiungere la funzione di supporto evaluate_dependencies(task, upstream_tasks)
+
+- integrare la decisione (run / wait / skip) nel loop principale dell’orchestratore
+
+- marcare le task come SKIPPED quando la policy lo impone
+
+- aggiornare correttamente il database tramite StatusManager
+
+----------------------------------------------------------
+
+📍 Fase 4 — StatusManager e database
+File da verificare:
+
+maestro/server/internals/status_manager.py
+
+maestro/server/internals/models.py (TaskORM)
+
+Cosa fare:
+
+- verificare che lo stato SKIPPED sia già gestito (lo è, perché lo abbiamo già implementato per branching)
+
+- assicurare che la chiamata .update_task salvi il nuovo stato
+
+Probabilmente non serve alcuna modifica qui, ma va controllato per sicurezza.
+
+----------------------------------------------------------
+
+📍 Fase 5 — Esecutori (Python, Bash, Print)
+File da controllare:
+
+maestro/server/tasks/bash_task.py
+
+maestro/server/tasks/python_task.py
+
+maestro/server/tasks/print_task.py
+
+Cosa verificare:
+
+- nessuna modifica alle task: se una task ha stato SKIPPED l’esecutore non la esegue comunque (l’orchestratore non la invia).
+
+----------------------------------------------------------
+
+📍 Fase 6 — Aggiornamento dei test
+File:
+
+tests/test_dag.py
+
+tests/test_orchestrator.py
+
+(eventuali test aggiuntivi che hai)
+
+Cosa fare:
+
+- aggiungere test per i 3 casi:
+
+-- ALL_SUCCESS
+
+-- ANY_SUCCESS
+
+-- ALWAYS_RUN (il nostro “none”)
+
+----------------------------------------------------------
+
+📍 Fase 7 — Documentazione
+File da aggiornare:
+
+- README del progetto
+
+- documentazione interna delle DAG
