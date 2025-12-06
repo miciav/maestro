@@ -378,7 +378,14 @@ class Orchestrator:
         stop_event: Optional[threading.Event],
         db_handler,
     ):
-        """Execute DAG tasks concurrently based on dependencies."""
+        """
+        Execute DAG tasks concurrently based on dependencies and dependency_policy.
+
+        - Tasks are evaluated with evaluate_dependencies()
+        - Tasks can be in states: run, wait, skip
+        - Skipped tasks are updated in StatusManager
+        """
+
         dag_id = dag.dag_id
 
         # Initialize task tracking sets
@@ -443,45 +450,47 @@ class Orchestrator:
                                 self._cancel_running_tasks(running_tasks)
                                 raise Exception(f"Task {task_id} failed: {e}")
 
-                # Find tasks ready to run
-                ready_tasks = self._find_ready_tasks(
-                    dag, pending_tasks, completed_tasks, failed_tasks, skipped_tasks
-                )
+                # Build upstream status dict
+                upstream_statuses = {tid: "completed" for tid in completed_tasks}
+                upstream_statuses.update({tid: "failed" for tid in failed_tasks})
+                upstream_statuses.update({tid: "skipped" for tid in skipped_tasks})
+                upstream_statuses.update({tid: "pending" for tid in pending_tasks})
+                upstream_statuses.update({tid: "running" for tid in running_tasks})
 
-                # Submit ready tasks for execution
-                for task_id in ready_tasks:
+                # Loop sui task pending
+                for task_id in list(pending_tasks):
                     task = dag.tasks[task_id]
+                    action = evaluate_dependencies(task, upstream_statuses)
 
-                    # Check if dependencies failed
-                    if self._has_failed_dependencies(task, failed_tasks, skipped_tasks):
-                        self.logger.warning(
-                            f"Skipping task {task_id} because its dependencies failed"
+                    if action == "run":
+                        # Submit task for execution
+                        self.logger.info(f"Submitting task {task_id} for execution")
+                        future = self.task_executor.submit(
+                            self._execute_task_async,
+                            task=task,
+                            dag_id=dag_id,
+                            execution_id=execution_id,
+                            status_callback=status_callback,
+                            progress_tracker=progress_tracker,
+                            db_handler=db_handler,
                         )
+                        running_tasks[task_id] = future
+                        pending_tasks.remove(task_id)
+
+                    elif action == "wait":
+                        continue  # lascia in pending
+
+                    elif action == "skip":
                         task.status = TaskStatus.SKIPPED
                         sm.set_task_status(dag_id, task_id, "skipped", execution_id)
                         skipped_tasks.add(task_id)
                         pending_tasks.remove(task_id)
                         if status_callback:
                             status_callback()
-                        continue
 
-                    # Submit task for execution
-                    self.logger.info(f"Submitting task {task_id} for execution")
-                    future = self.task_executor.submit(
-                        self._execute_task_async,
-                        task=task,
-                        dag_id=dag_id,
-                        execution_id=execution_id,
-                        status_callback=status_callback,
-                        progress_tracker=progress_tracker,
-                        db_handler=db_handler,
-                    )
-                    running_tasks[task_id] = future
-                    pending_tasks.remove(task_id)
-
-                # Brief sleep to prevent busy waiting
-                if not ready_tasks and running_tasks:
-                    threading.Event().wait(0.1)
+                # Evita busy-waiting
+                if pending_tasks or running_tasks:
+                    threading.Event().wait(0.05)
 
     def _find_ready_tasks(
         self,
@@ -496,7 +505,7 @@ class Orchestrator:
 
         Un task è "ready" quando:
         - tutte le sue dipendenze sono in stato terminale
-          (completed, failed o skipped)
+        (completed, failed o skipped)
         - e, se ha una condition, questa viene valutata a True.
 
         I task la cui condition risulta False vengono marcati come SKIPPED qui.
@@ -544,17 +553,6 @@ class Orchestrator:
                 pending_tasks.remove(tid)
 
         return ready_tasks
-
-    def _has_failed_dependencies(
-        self, task, failed_tasks: Set[str], skipped_tasks: Set[str]
-    ) -> bool:
-        """
-        A task is blocked ONLY if one of its dependencies FAILED.
-
-        Skipped dependencies do not block downstream tasks — this enables
-        branching with a final merge step, where only one branch runs.
-        """
-        return any(dep in failed_tasks for dep in task.dependencies)
 
     def _evaluate_condition(self, task, dag_id: str, execution_id: str) -> bool:
         """Evaluate the boolean condition of a task using output_of()."""
@@ -837,3 +835,44 @@ class Orchestrator:
                     )
 
         return stopped_count
+
+
+def evaluate_dependencies(task: BaseTask, upstream_statuses: Dict[str, str]) -> str:
+    """
+    Decide lo stato della task in base alle dipendenze.
+
+    Parametri:
+        task: il task da valutare
+        upstream_statuses: dict {task_id: TaskStatus} dei task upstream
+
+    Ritorna:
+        "run" -> tutte le condizioni soddisfatte, task pronta a partire
+        "wait" -> task deve attendere
+        "skip" -> task deve essere skippata
+    """
+    policy = getattr(task, "dependency_policy", "none")
+    dependencies = getattr(task, "dependencies", [])
+
+    if not dependencies or policy == "none":
+        return "run"
+
+    statuses = [upstream_statuses.get(dep) for dep in dependencies]
+
+    if policy == "all":
+        if any(s is None or s in ("pending", "running") for s in statuses):
+            return "wait"
+        if all(s == "completed" for s in statuses):
+            return "run"
+        # Se una dipendenza ha fallito, skip task
+        if any(s == "failed" for s in statuses):
+            return "skip"
+
+    elif policy == "any":
+        if any(s == "completed" for s in statuses):
+            return "run"
+        if all(s in ("pending", "running", None) for s in statuses):
+            return "wait"
+        if all(s in ("failed", "skipped") for s in statuses):
+            return "skip"
+
+    return "run"
