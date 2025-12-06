@@ -11,7 +11,6 @@ dag:
   name: "conditional_branching_matrix"
 
   tasks:
-
     # ---------------------------------------------------------
     # 1) ROOT: condition/value evaluation (informational only).
     # ---------------------------------------------------------
@@ -37,7 +36,7 @@ dag:
           nums = [1, 2, 3]
           print("Branch 1 - step 1, nums:", nums)
       dependencies: ["root"]
-      condition: "output_of('evaluate_condition')['branch'] == '1'"
+      condition: "output_of('root')['branch'] == '1'"
 
     - task_id: "b1_2"
       type: "BashTask"
@@ -60,7 +59,7 @@ dag:
       params:
         command: "echo 'Branch 2 - step 1, listing current dir'; ls -1 | head -n 5"
       dependencies: ["root"]
-      condition: "output_of('evaluate_condition')['branch'] == '2'"
+      condition: "output_of('root')['branch'] == '2'"
 
     - task_id: "b2_2"
       type: "PythonTask"
@@ -86,7 +85,7 @@ dag:
           words = ["alpha", "beta", "gamma"]
           print("Branch 3 - step 1, words:", words)
       dependencies: ["root"]
-      condition: "output_of('evaluate_condition')['branch'] == '3'"
+      condition: "output_of('root')['branch'] == '3'"
 
     - task_id: "b3_2"
       type: "BashTask"
@@ -109,7 +108,7 @@ dag:
       params:
         command: "echo 'Branch 4 - step 1, checking date'; date"
       dependencies: ["root"]
-      condition: "output_of('evaluate_condition')['branch'] == '4'"
+      condition: "output_of('root')['branch'] == '4'"
 
     - task_id: "b4_2"
       type: "PythonTask"
