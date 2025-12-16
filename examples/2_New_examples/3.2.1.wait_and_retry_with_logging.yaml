@@ -52,3 +52,4 @@ dag:
       params:
         message: "All retry tasks completed!"
       dependencies: ["unstable_task_2"]
+      # dependency_policy: "none"

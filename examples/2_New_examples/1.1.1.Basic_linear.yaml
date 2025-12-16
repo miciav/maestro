@@ -6,14 +6,18 @@ dag:
       params:
         message: "Starting DAG"
       dependencies: []
+
     - task_id: "process"
       type: "PythonTask"
       params:
         code: |
           print("Processing data...")
       dependencies: ["start"]
+      # dependency_policy: "all"
+
     - task_id: "finish"
       type: "PrintTask"
       params:
         message: "DAG completed!"
       dependencies: ["process"]
+      dependency_policy: "all"
