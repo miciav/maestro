@@ -854,7 +854,7 @@ def evaluate_dependencies(
 ) -> str:
     """
     Decide lo stato della task in base a:
-    - dependency_policy (all/any)
+    - dependency_policy (all/any/none)
     - stato delle dipendenze
     - condition dinamica basata sugli output delle task upstream
 
@@ -868,66 +868,51 @@ def evaluate_dependencies(
     condition = getattr(task, "condition", None)
 
     # ---------------------------------------------------------
-    # 1) Se la task NON ha dipendenze e NON ha condition → RUN
+    # 1) Nessuna dipendenza e nessuna condition → RUN
     # ---------------------------------------------------------
     if not dependencies and not condition:
         return "run"
 
     # ---------------------------------------------------------
-    # 2) Gestione dipendenze
+    # 2) Gestione dipendenze (regole UNIVERSALI)
     # ---------------------------------------------------------
-    if dependencies and policy != "none":
+    if dependencies:
         statuses = [upstream_statuses.get(dep) for dep in dependencies]
 
-        # Se qualche dipendenza non è ancora nota → WAIT
+        # Stato non ancora noto
         if any(s is None for s in statuses):
+            return "wait"
+
+        # Dipendenze non ancora terminali
+        if any(s in ("pending", "running") for s in statuses):
             return "wait"
 
         # ---- policy ALL ----
         if policy == "all":
-            # Se una è pending/running → WAIT
-            if any(s in ("pending", "running") for s in statuses):
-                return "wait"
-
-            # Se tutte sono completed → OK, continua
-            if all(s == "completed" for s in statuses):
-                pass
-            else:
-                # altrimenti se una è failed → SKIP
-                if any(s == "failed" for s in statuses):
-                    return "skip"
-                # se una è skipped → SKIP
-                if any(s == "skipped" for s in statuses):
-                    return "skip"
+            if not all(s == "completed" for s in statuses):
+                return "skip"
 
         # ---- policy ANY ----
         elif policy == "any":
-            # Se almeno una completed → OK, continua
-            if any(s == "completed" for s in statuses):
-                pass
-            else:
-                # tutte pending/running/None → WAIT
-                if all(s in ("pending", "running") for s in statuses):
-                    return "wait"
+            if not any(s == "completed" for s in statuses):
+                return "skip"
 
-                # Se tutte failed o skipped → SKIP
-                if all(s in ("failed", "skipped") for s in statuses):
-                    return "skip"
+        # ---- policy NONE ----
+        elif policy == "none":
+            # tutte terminali → non importa lo stato
+            pass
 
     # ---------------------------------------------------------
-    # 3) Gestione condition basata sugli output
+    # 3) Gestione condition
     # ---------------------------------------------------------
     if condition:
         try:
-            # Helper per leggere gli output delle task upstream
+
             def output_of(tid):
                 return sm.get_task_output(dag_id, tid, execution_id)
 
             env = {"output_of": output_of}
-
-            cond_result = eval(condition, {}, env)
-
-            if not cond_result:
+            if not eval(condition, {}, env):
                 return "skip"
 
         except Exception as e:
@@ -937,6 +922,6 @@ def evaluate_dependencies(
             return "skip"
 
     # ---------------------------------------------------------
-    # 4) Se tutto è OK → RUN
+    # 4) Tutto OK → RUN
     # ---------------------------------------------------------
     return "run"
