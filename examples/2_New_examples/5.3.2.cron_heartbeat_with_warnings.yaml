@@ -1,0 +1,51 @@
+abstract: |
+  This DAG extends the heartbeat model with a warning-generation system. Each branch performs a diagnostic check and emits a simulated warning without failing the pipeline. It tests the orchestrator’s ability to handle scheduled tasks that produce structured warnings, maintain uptime, and avoid fail-fast conditions.
+
+dag:
+  name: "cron_heartbeat_with_warnings"
+  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+
+  tasks:
+    # ROOT: set a critical (fake) threshold
+    - task_id: "evaluate_status"
+      type: "PythonTask"
+      params:
+        code: |
+          import random
+          status = random.choice(["OK", "WARNING"])
+          print(f"Evaluated heartbeat status: {status}")
+      dependencies: []
+
+    # OK branch
+    - task_id: "ok_branch_info"
+      type: "BashTask"
+      params:
+        command: "echo 'OK branch: lightweight checks...'"
+      dependencies: ["evaluate_status"]
+
+    - task_id: "ok_branch_print"
+      type: "PrintTask"
+      params:
+        message: "OK branch completed."
+      dependencies: ["ok_branch_info"]
+
+    # WARNING branch
+    - task_id: "warning_branch_detail"
+      type: "PythonTask"
+      params:
+        code: |
+          print("WARNING branch: capturing extra diagnostic info (simulated).")
+      dependencies: ["evaluate_status"]
+
+    - task_id: "warning_branch_log"
+      type: "BashTask"
+      params:
+        command: "echo \"$(date) - WARNING: simulated condition\" >> /tmp/maestro_heartbeat_warn.log"
+      dependencies: ["warning_branch_detail"]
+
+    # Final marge
+    - task_id: "heartbeat_summary"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat with warnings: all branches executed."
+      dependencies: ["ok_branch_print", "warning_branch_log"]

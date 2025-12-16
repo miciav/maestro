@@ -1,0 +1,81 @@
+abstract: |
+  This DAG expands the basic scheduled greeting example by introducing a multilingual greeting flow executed immediately after the scheduled start_time is reached.
+
+  The pipeline performs:
+    - A starting PrintTask announcing the scheduled execution
+    - A PythonTask that selects a random language code ("EN", "IT", "ES")
+    - Two child PrintTasks, one for each greeting style
+      (in this version both are executed, regardless of the condition)
+    - A final PrintTask that confirms the end of the multilingual flow
+
+  This DAG tests:
+    - Scheduled DAG triggering
+    - Parallel fan-out from PythonTask
+    - Execution of multiple PrintTasks representing different output behaviors
+    - Concurrency and synchronization before the final merge
+
+dag:
+  name: "scheduled_greeting_language_mix"
+  start_time: "2025-10-23T09:00:00"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Initial scheduled activation message
+    # ---------------------------------------------------------
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Scheduled multilingual greeting starting..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) Python selection of a pseudo-random language
+    # ---------------------------------------------------------
+    - task_id: "choose_language"
+      type: "PythonTask"
+      params:
+        code: |
+          import random
+          lang = random.choice(["EN", "IT", "ES"])
+          print(f"Selected language: {lang}")
+      dependencies: ["start"]
+
+    # ---------------------------------------------------------
+    # 3) Greeting branch EN
+    # ---------------------------------------------------------
+    - task_id: "greet_en"
+      type: "PrintTask"
+      params:
+        message: "Hello! Good morning!"
+      dependencies: ["choose_language"]
+
+    # ---------------------------------------------------------
+    # 3b) Greeting branch IT
+    # ---------------------------------------------------------
+    - task_id: "greet_it"
+      type: "PrintTask"
+      params:
+        message: "Ciao! Buongiorno!"
+      dependencies: ["choose_language"]
+
+    # ---------------------------------------------------------
+    # 3c) Greeting branch ES
+    # ---------------------------------------------------------
+    - task_id: "greet_es"
+      type: "PrintTask"
+      params:
+        message: "¡Hola! ¡Buenos días!"
+      dependencies: ["choose_language"]
+
+    # ---------------------------------------------------------
+    # 4) Final merge ensuring all greetings completed
+    # ---------------------------------------------------------
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Multilingual greeting pipeline completed!"
+      dependencies:
+        - "greet_en"
+        - "greet_it"
+        - "greet_es"

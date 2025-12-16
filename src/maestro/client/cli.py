@@ -17,6 +17,29 @@ import json
 
 from .api_client import MaestroAPIClient
 
+def _print_status_table(console, dag_id: str, execution_id: str, status: dict):
+    """
+    Helper per stampare lo stesso output di 'maestro status'.
+    """
+    from rich.table import Table
+
+    table = Table(title=f"DAG Status — {dag_id} ({execution_id})")
+
+    table.add_column("Task ID", style="magenta")
+    table.add_column("Status", style="cyan")
+    table.add_column("Started", style="green")
+    table.add_column("Completed", style="yellow")
+
+    for task in status.get("tasks", []):
+        table.add_row(
+            task["task_id"],
+            task["status"],
+            task.get("started_at", "") or "",
+            task.get("completed_at", "") or ""
+        )
+
+    console.print(table)
+
 app = typer.Typer(help="Maestro CLI Client - Communicate with Maestro REST API server")
 console = Console()
 
@@ -58,46 +81,131 @@ def create(
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
 
+
 @app.command()
 def run(
-    dag_input: str = typer.Argument(..., help="DAG ID or path to DAG YAML file"),
-    resume: bool = typer.Option(False, "--resume", help="Resume from last checkpoint"),
-    fail_fast: bool = typer.Option(True, "--fail-fast/--no-fail-fast", help="Stop on first failure"),
+    dag_file: str = typer.Argument(..., help="Path to DAG YAML file"),
+    detach: bool = typer.Option(False, "--detach", "-d", help="Run in detached mode"),
     server_url: str = typer.Option("http://localhost:8000", "--server", help="Maestro server URL")
 ):
-    """Run a DAG - either by ID or by creating from a YAML file"""
+    """
+    Run a DAG.
+    - Default = attached mode (stream logs until completion)
+    - --detach = detached mode with automatic status reporting at the end
+    """
+
     api_client.base_url = server_url
     check_server_connection()
 
+    console.print(f"[cyan]Creating DAG from file: {dag_file}[/cyan]")
+
+    # 1. CREATE DAG
     try:
-        # Check if the input is a file path or a DAG ID
-        if os.path.exists(dag_input) and dag_input.endswith(('.yaml', '.yml')):
-            # It's a file path - create the DAG first
-            dag_file_path = os.path.abspath(dag_input)
-            console.print(f"[blue]Creating DAG from file: {dag_file_path}[/blue]")
-            create_response = api_client.create_dag(dag_file_path)
-            dag_id = create_response['dag_id']
-            console.print(f"[bold green]✓ DAG created successfully with ID: {dag_id}[/bold green]")
-        else:
-            # It's a DAG ID
-            dag_id = dag_input
-        
-        # Now run the DAG
-        response = api_client.run_dag(dag_id, resume, fail_fast)
-        console.print(f"[bold green]✓ DAG started successfully![/bold green]")
-        console.print(f"[cyan]DAG ID:[/cyan] {response['dag_id']}")
-        console.print(f"[cyan]Execution ID:[/cyan] {response['execution_id']}")
-        console.print(f"[cyan]Status:[/cyan] [yellow]{response['status']}[/yellow]")
-        console.print()
-        console.print("[bold blue]Available commands:[/bold blue]")
-        console.print(f"  • [bold]maestro status {response['dag_id']}[/bold] - Check DAG status")
-        console.print(f"  • [bold]maestro log {response['dag_id']}[/bold] - View logs")
-        console.print(f"  • [bold]maestro attach {response['dag_id']}[/bold] - Attach to live log stream")
-        console.print(f"  • [bold]maestro stop {response['dag_id']}[/bold] - Stop execution")
-        console.print()
+        result = api_client.create_dag(dag_file)
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error creating DAG: {e}[/red]")
         raise typer.Exit(1)
+
+    dag_id = result.get("dag_id")
+    if not dag_id:
+        console.print("[red]Server did not return dag_id[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]DAG created: {dag_id}[/green]")
+
+    # 2. RUN DAG
+    try:
+        run_info = api_client.run_dag(dag_id)
+    except Exception as e:
+        console.print(f"[red]Error running DAG: {e}[/red]")
+        raise typer.Exit(1)
+
+    execution_id = run_info.get("execution_id")
+    if not execution_id:
+        console.print("[red]Server did not return execution_id[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Execution started: {execution_id}[/green]")
+
+    # -----------------------------------------------------------------------
+    # 3A — DETACHED MODE
+    # -----------------------------------------------------------------------
+    if detach:
+
+        console.print("[yellow]Running in detached mode.[/yellow]\n")
+
+        console.print("Available commands:")
+        console.print(f"  • maestro attach {dag_id} - Attach to live log stream")
+        console.print(f"  • maestro stop {dag_id} or Ctrl+C - Stop execution\n")
+
+        console.print("[dim]...running DAG...[/dim]\n")
+
+        # POLLING FINO A COMPLETAMENTO
+        while True:
+            try:
+                status = api_client.get_dag_status(dag_id, execution_id)
+                if status["status"] in ("completed", "failed", "cancelled"):
+                    break
+                time.sleep(1)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Detached (polling stopped).[/yellow]")
+                return
+            except Exception:
+                # se il server fosse temporaneamente non raggiungibile
+                time.sleep(1)
+
+        console.print(f"\n[green]DAG completed[/green]\n")
+
+        console.print("Available commands:")
+        console.print(f"  • maestro status {dag_id} - Check DAG status")
+        console.print(f"  • maestro log {dag_id} - View logs\n")
+
+        return
+
+    # -----------------------------------------------------------------------
+    # 3B — ATTACHED MODE
+    # -----------------------------------------------------------------------
+
+    console.print(f"[bold cyan]Attaching to live logs...[/bold cyan]")
+    console.print("[dim]Press Ctrl+C to detach[/dim]\n")
+
+    try:
+        for log_entry in api_client.stream_dag_logs_v1(dag_id, execution_id):
+            # Evento di fine DAG
+            if log_entry.get("event") == "DAG_COMPLETED":
+                console.print("\n[green]DAG completed — detaching.[/green]\n")
+                break
+
+            if "level" not in log_entry:
+                continue
+
+            level = log_entry["level"]
+            ts = log_entry["timestamp"].split("T")[1].split(".")[0]
+            task = log_entry["task_id"]
+            msg = log_entry["message"]
+
+            style = {
+                "ERROR": "red",
+                "WARNING": "yellow",
+                "INFO": "green",
+                "DEBUG": "blue",
+            }.get(level, "white")
+
+            console.print(f"[dim]{ts}[/dim] [{style}]{level}[/] [magenta]{task}[/]: {msg}")
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Detached from log stream[/yellow]")
+        return
+
+    # 🔥 DOPO LO STREAMING → MOSTRA STATUS COMPLETO
+    console.print("[cyan]DAG final status:[/cyan]\n")
+
+    try:
+        status = api_client.get_dag_status(dag_id, execution_id)
+        _print_status_table(console, dag_id, execution_id, status)
+    except Exception as e:
+        console.print(f"[red]Unable to fetch DAG status: {e}[/red]")
+
 
 @app.command()
 def validate(
@@ -189,6 +297,7 @@ def status(
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
 
+
 @app.command()
 def log(
     dag_id: str = typer.Argument(..., help="DAG ID to get logs for"),
@@ -201,20 +310,42 @@ def log(
     """Show logs for a DAG execution"""
     api_client.base_url = server_url
     check_server_connection()
-    
+
     try:
+
         response = api_client.get_dag_logs_v1(dag_id, execution_id, limit, task_filter, level_filter)
-        
+
+        # 🔧 FIX 1: se la risposta è una stringa JSON, decodificala
+        if isinstance(response, str):
+            import json
+            try:
+                response = json.loads(response)
+            except Exception:
+                console.print("[red]Error: invalid JSON returned from server[/red]")
+                raise typer.Exit(1)
+
+        # Se la risposta è un dizionario con chiave "logs", estrai la lista
+        if isinstance(response, dict) and "logs" in response:
+            response = response["logs"]
+
+        # 🔧 FIX 2: se è una lista di stringhe JSON, deserializzale
+        if isinstance(response, list) and all(isinstance(e, str) for e in response):
+            try:
+                response = [json.loads(e) for e in response]
+            except Exception:
+                console.print("[red]Error: invalid JSON structure in log entries[/red]")
+                raise typer.Exit(1)
+
         if not response:
             console.print(f"[yellow]No logs found for DAG: {dag_id}[/yellow]")
             return
-        
+
         console.print(f"[bold cyan]Logs: {dag_id}[/bold cyan]")
         if execution_id:
             console.print(f"[dim]Execution ID: {execution_id}[/dim]")
         console.print(f"[dim]Showing {len(response)} log entries[/dim]")
         console.print()
-        
+
         for log_entry in reversed(response):
             level_style = {
                 "ERROR": "red",
@@ -222,17 +353,18 @@ def log(
                 "INFO": "green",
                 "DEBUG": "blue"
             }.get(log_entry["level"], "white")
-            
+
             timestamp = log_entry["timestamp"].split("T")[1].split(".")[0] if "T" in log_entry["timestamp"] else log_entry["timestamp"]
-            
+
             console.print(f"[dim]{timestamp}[/dim] [{level_style}]{log_entry['level']}[/{level_style}] [magenta]{log_entry['task_id']}[/magenta]: {log_entry['message']}")
-        
+
         console.print()
         console.print(f"[dim]💡 Tip: Use 'maestro attach {dag_id}' for live log streaming[/dim]")
-        
+
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
+
 
 @app.command()
 def attach(
@@ -264,6 +396,11 @@ def attach(
                 console.print(f"[red]Stream error: {log_entry['error']}[/red]")
                 break
             
+            # 👉 Evento interno del server: DAG completata → detach automatico
+            if "event" in log_entry and log_entry["event"] == "DAG_COMPLETED":
+                console.print("\n[green][DAG COMPLETED] Detaching...[/green]\n")
+                return
+
             level_style = {
                 "ERROR": "red",
                 "WARNING": "yellow",

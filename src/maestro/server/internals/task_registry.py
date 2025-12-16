@@ -14,15 +14,14 @@ class TaskRegistry:
 
     def _load_builtin_tasks(self):
         """Load built-in task types."""
-        from maestro.server.tasks.print_task import PrintTask
-        from maestro.server.tasks.file_writer_task import FileWriterTask
-        from maestro.server.tasks.wait_task import WaitTask
-        from maestro.server.tasks.terraform_task import TerraformTask
         from maestro.server.tasks.ansible_task import AnsibleTask
-        from maestro.server.tasks.extended_terraform_task import ExtendedTerraformTask
-        from maestro.server.tasks.python_task import PythonTask
         from maestro.server.tasks.bash_task import BashTask
-
+        from maestro.server.tasks.extended_terraform_task import ExtendedTerraformTask
+        from maestro.server.tasks.file_writer_task import FileWriterTask
+        from maestro.server.tasks.print_task import PrintTask
+        from maestro.server.tasks.python_task import PythonTask
+        from maestro.server.tasks.terraform_task import TerraformTask
+        from maestro.server.tasks.wait_task import WaitTask
 
         self.register("PrintTask", PrintTask)
         self.register("FileWriterTask", FileWriterTask)

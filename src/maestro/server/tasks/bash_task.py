@@ -1,36 +1,90 @@
-# maestro/src/server/task/bash_task.py
-
-import subprocess
 import logging
+import subprocess
+
+from maestro.server.internals.status_manager import StatusManager
 from maestro.server.tasks.base import BaseTask
 
 logger = logging.getLogger(__name__)
+logger.propagate = True
+
 
 class BashTask(BaseTask):
-    """
-    A task that executes a Bash command locally.
-    """
     command: str
 
     def execute_local(self):
-        logger.info(f"[BashTask] Executing command: {self.command}")
-        try:
-            result = subprocess.run(
-                self.command,
-                shell=True,
-                executable="/bin/bash",
-                capture_output=True,
-                text=True
+        sm = StatusManager.get_instance()
+        dag_id = self.dag_id
+        execution_id = self.execution_id
+        task_id = self.task_id
+
+        process = subprocess.Popen(
+            self.command,
+            shell=True,
+            executable="/bin/bash",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        captured_output = None
+
+        # STDOUT
+        for line in process.stdout:
+            clean = line.rstrip("\n")
+            msg = f"[BashTask][stdout] {clean}"
+
+            print(msg, flush=True)
+
+            sm.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=msg,
+                level="INFO",
             )
-            if result.returncode == 0:
-                logger.info(f"[BashTask] Output:\n{result.stdout.strip()}")
-                self.status = "completed"
-            else:
-                logger.error(f"[BashTask] Error:\n{result.stderr.strip()}")
-                self.status = "failed"
-        except Exception as e:
-            logger.exception(f"[BashTask] Exception: {e}")
-            self.status = "failed"
+
+            # NEW: detect structured output: OUTPUT: ...
+
+            raw = clean.lstrip()
+            if raw.startswith("OUTPUT:"):
+                value = raw.split("OUTPUT:", 1)[1].strip()
+                captured_output = value
+
+        # Leggi STDERR riga per riga
+        for line in process.stderr:
+            clean = line.rstrip("\n")
+            msg = f"[BashTask][stderr] {clean}"
+
+            print(msg, flush=True)
+
+            sm.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=msg,
+                level="ERROR",
+            )
+
+        # Attendi la fine del processo
+        process.wait()
+        rc = process.returncode
+
+        if rc != 0:
+            msg = f"[BashTask] Failed with exit code {rc}"
+            print(msg, flush=True)
+            sm.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=msg,
+                level="ERROR",
+            )
+            raise Exception(f"BashTask failed with exit code {rc}")
+
+        # NEW — persist captured output (if present)
+        if captured_output is not None:
+            sm.set_task_output(dag_id, task_id, execution_id, captured_output)
 
     def to_dict(self):
         """Include the command field in serialized form."""

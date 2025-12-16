@@ -94,42 +94,56 @@ class MaestroAPIClient:
         response = self._make_request("GET", endpoint, params=params)
         return response.json()
 
+
     # TODO: refactor, this is used only for testing
-    def stream_dag_logs_v1(self, dag_id: str, execution_id: Optional[str] = None,
-                       task_filter: Optional[str] = None, 
-                       level_filter: Optional[str] = None) -> Iterator[Dict[str, Any]]:
-        """Stream logs for a specific DAG execution in real-time using the v1 API"""
-        endpoint = f"/v1/dags/{dag_id}/attach"
+    def stream_dag_logs_v1(
+        self,
+        dag_id: str,
+        execution_id: Optional[str] = None,
+        task_filter: Optional[str] = None,
+        level_filter: Optional[str] = None
+    ) -> Iterator[Dict[str, Any]]:
+        """
+        Stream logs for a specific DAG execution in real-time using the v1 API.
+        FIX: punta all'endpoint /v1/logs/{dag_id}/attach esposto dal server.
+        """
+
+        # 🚩 QUI il vero fix: usare "logs" e non "dags", e mantenere il prefisso /v1
+        endpoint = f"/v1/logs/{dag_id}/attach"
+
         params = {}
-        
         if execution_id:
             params["execution_id"] = execution_id
         if task_filter:
             params["task_filter"] = task_filter
         if level_filter:
             params["level_filter"] = level_filter
-        
+
         url = f"{self.base_url}{endpoint}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        
+
         try:
             with self.session.get(url, stream=True, timeout=None) as response:
                 response.raise_for_status()
-                
+
                 for line in response.iter_lines():
-                    if line:
-                        line = line.decode('utf-8')
-                        if line.startswith('data: '):
-                            data = line[6:]  # Remove 'data: ' prefix
-                            try:
-                                yield json.loads(data)
-                            except json.JSONDecodeError:
-                                continue
+                    if not line:
+                        continue
+
+                    line = line.decode("utf-8").strip()
+                    if line.startswith("data: "):
+                        data = line[len("data: "):]
+                        try:
+                            yield json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+
         except requests.exceptions.ConnectionError:
             raise ConnectionError(f"Could not connect to Maestro server at {self.base_url}")
         except requests.exceptions.HTTPError as e:
             raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+
     
     def get_running_dags(self) -> Dict[str, Any]:
         """Get all currently running DAGs"""

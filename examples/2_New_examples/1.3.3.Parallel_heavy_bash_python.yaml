@@ -1,0 +1,39 @@
+# -------------------------------------------------------------------------------------
+# Heavy Parallel Bash/Python
+# -------------------------------------------------------------------------------------
+# A DAG designed to generate a heavy, concurrent load on two separate executors: Bash and Python. Both main tasks start in parallel, each with a significant wait time (45–50 seconds). The final join allows you to check the logger's behavior, the smoothness of the streaming, and the correct handling of very slow parallel tasks.
+# -------------------------------------------------------------------------------------
+
+dag:
+  name: "parallel_heavy_bash_python"
+  tasks:
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Begin heavy parallel sequence"
+      dependencies: []
+
+    - task_id: "bash_long"
+      type: "BashTask"
+      params:
+        command: |
+          echo "Bash running long task..."
+          sleep 45
+          echo "Bash task completed."
+      dependencies: ["start"]
+
+    - task_id: "python_long"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Python running long task...")
+          time.sleep(50)
+          print("Python task completed.")
+      dependencies: ["start"]
+
+    - task_id: "final_merge"
+      type: "PrintTask"
+      params:
+        message: "All heavy tasks completed"
+      dependencies: ["bash_long", "python_long"]

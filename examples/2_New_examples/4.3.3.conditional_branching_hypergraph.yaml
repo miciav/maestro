@@ -1,0 +1,162 @@
+abstract: |
+  This DAG represents a high-complexity “hypergraph” branching structure.
+  It expands far beyond traditional fan-out/fan-in patterns by:
+
+    - Starting from a Python-based condition evaluation
+    - Creating three primary branches
+    - Allowing the branches to interconnect at the second tier
+    - Generating a tertiary fan-out from the partial merge
+    - Finally collapsing everything into a unified final task
+
+  This structure is ideal for stress-testing:
+    - Multi-level synchronization
+    - Complex dependency graphs
+    - Mixed Bash/Python execution patterns
+    - Large-scale parallelism and merge logic
+
+  All tasks run regardless of the evaluated condition (the condition is logged only).
+  This makes the DAG’s behavior deterministic in execution but non-deterministic in logging.
+
+dag:
+  name: "conditional_branching_hypergraph"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) ROOT INITIALIZATION
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting hypergraph conditional pipeline..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) CONDITION EVALUATION
+    # ---------------------------------------------------------
+    - task_id: "evaluate_condition"
+      type: "PythonTask"
+      params:
+        code: |
+          import random
+          branches = ["A", "B", "C"]
+          cond = random.choice(branches)
+          print(f"Condition evaluated: {cond}")
+          task_output = {"branch": cond}
+      dependencies: ["init"]
+
+    # =========================================================
+    # PRIMARY FAN-OUT (3 BRANCHES)
+    # =========================================================
+
+    # -------- BRANCH A --------
+    - task_id: "A1"
+      type: "PythonTask"
+      params:
+        code: |
+          print("Branch A - Step 1 completed")
+      dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'A'"
+
+    - task_id: "A2"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch A - Step 2 completed'"
+      dependencies: ["A1"]
+
+    # -------- BRANCH B --------
+    - task_id: "B1"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch B - Step 1 completed'"
+      dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'B'"
+
+    - task_id: "B2"
+      type: "PythonTask"
+      params:
+        code: |
+          print("Branch B - Step 2 completed")
+      dependencies: ["B1"]
+
+    # -------- BRANCH C --------
+    - task_id: "C1"
+      type: "PythonTask"
+      params:
+        code: |
+          print("Branch C - Step 1 completed")
+      dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'C'"
+
+    - task_id: "C2"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch C - Step 2 completed'"
+      dependencies: ["C1"]
+
+    # =========================================================
+    # SECONDARY INTERCONNECTED LAYER
+    # =========================================================
+    # A2 joins with B1 and C2 (cross connections)
+
+    - task_id: "merge_AB"
+      type: "PrintTask"
+      params:
+        message: "Merging output from A2 and B2"
+      dependencies: ["A2", "B2"]
+
+    - task_id: "merge_BC"
+      type: "PrintTask"
+      params:
+        message: "Merging output from B2 and C2"
+      dependencies: ["B2", "C2"]
+
+    - task_id: "merge_CA"
+      type: "PrintTask"
+      params:
+        message: "Merging output from C2 and A2"
+      dependencies: ["C2", "A2"]
+
+    # =========================================================
+    # TERTIARY FAN-OUT FROM PARTIAL MERGES
+    # =========================================================
+
+    - task_id: "T1"
+      type: "PythonTask"
+      params:
+        code: |
+          print("T1: Post-merge computation A+B")
+      dependencies: ["merge_AB"]
+
+    - task_id: "T2"
+      type: "PythonTask"
+      params:
+        code: |
+          print("T2: Post-merge computation B+C")
+      dependencies: ["merge_BC"]
+
+    - task_id: "T3"
+      type: "PythonTask"
+      params:
+        code: |
+          print("T3: Post-merge computation C+A")
+      dependencies: ["merge_CA"]
+
+    # =========================================================
+    # FINAL MERGE (ALL TERTIARY TASKS)
+    # =========================================================
+
+    - task_id: "final_merge"
+      type: "PrintTask"
+      params:
+        message: "All tertiary computations completed. Final consolidation..."
+      dependencies: ["T1", "T2", "T3"]
+
+    # ---------------------------------------------------------
+    # 6) FINAL OUTPUT TASK
+    # ---------------------------------------------------------
+    - task_id: "final"
+      type: "PrintTask"
+      params:
+        message: "Hypergraph branching pipeline completed!"
+      dependencies: ["final_merge"]

@@ -1,0 +1,84 @@
+abstract: |
+  This DAG expands the mixed_execution pattern by introducing a branching
+  data-processing pipeline. After generating a JSON file, the DAG splits
+  into two parallel branches:
+
+    - Branch A (Bash): extracts digits from the file and counts them
+    - Branch B (Python): loads the JSON and computes a numeric statistic
+
+  Both branches then merge into a final PrintTask.
+
+  This structure tests:
+    - Mixed Python/Bash execution across parallel branches
+    - Synchronization via a multi-branch fan-in
+    - Correct handling of file I/O across executors
+    - Readability of logs in concurrent flows
+
+dag:
+  name: "mixed_execution_branching"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) START MESSAGE
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting mixed execution branching pipeline..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) GENERATE JSON DATA USING PYTHON
+    # ---------------------------------------------------------
+    - task_id: "generate_data"
+      type: "PythonTask"
+      params:
+        code: |
+          import json
+          data = {"values": [3, 5, 8, 13, 21]}
+          with open("numbers.json", "w") as f:
+            json.dump(data, f)
+          print("Generated numbers.json with Fibonacci-like values.")
+      dependencies: ["init"]
+
+    # =========================================================
+    # BRANCH A — BASH PROCESSING
+    # =========================================================
+
+    - task_id: "bash_extract_digits"
+      type: "BashTask"
+      params:
+        command: "grep -o '[0-9]' numbers.json > digits.txt"
+      dependencies: ["generate_data"]
+
+    - task_id: "bash_count_digits"
+      type: "BashTask"
+      params:
+        command: "wc -l digits.txt"
+      dependencies: ["bash_extract_digits"]
+
+    # =========================================================
+    # BRANCH B — PYTHON PROCESSING
+    # =========================================================
+
+    - task_id: "python_compute_sum"
+      type: "PythonTask"
+      params:
+        code: |
+          import json
+          with open("numbers.json") as f:
+            data = json.load(f)
+          print("Sum of values:", sum(data["values"]))
+      dependencies: ["generate_data"]
+
+    # =========================================================
+    # FINAL MERGE
+    # =========================================================
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Branching mixed execution pipeline completed!"
+      dependencies:
+        - "bash_count_digits"
+        - "python_compute_sum"

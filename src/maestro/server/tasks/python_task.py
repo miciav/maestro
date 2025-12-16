@@ -1,21 +1,113 @@
 from typing import Optional
 from pydantic import Field
+import traceback
+import io
+import contextlib
+import threading
+import sys
+
 from maestro.server.tasks.base import BaseTask
+from maestro.server.internals.status_manager import StatusManager
 
 
 class PythonTask(BaseTask):
     """
-    Executes a Python snippet provided as a string or a file path.
+    Executes inline Python code or a .py script.
+    Captures print() output and writes it into logs table
+    with proper dag_id, execution_id, and formatted message.
     """
+
     code: Optional[str] = Field(default=None, description="Inline Python code to execute")
     script_path: Optional[str] = Field(default=None, description="Path to a .py file to execute")
 
     def execute_local(self):
-        if self.code:
-            exec(self.code, {})
-        elif self.script_path:
-            with open(self.script_path, "r") as f:
-                code = f.read()
-            exec(code, {})
-        else:
-            raise ValueError("PythonTask requires either 'code' or 'script_path'.")
+        """
+        Esegue il codice Python catturando le chiamate a print() e
+        scrivendole DIRETTAMENTE nella tabella logs tramite StatusManager,
+        senza toccare sys.stdout/sys.stderr globali (thread-safe).
+        """
+        sm = StatusManager.get_instance()
+
+        dag_id = getattr(self, "dag_id", None) or "unknown_dag"
+        execution_id = getattr(self, "execution_id", None) or "unknown_execution"
+        task_id = self.task_id
+
+        # useremo la print "vera" solo per la console server
+        real_print = print
+
+        def _log_line(level: str, text: str):
+            # stampa su console server
+            real_print(text, flush=True)
+            # e registra nel DB
+            sm.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=text,
+                level=level
+            )
+
+        def task_print(*args, **kwargs):
+            sep = kwargs.get("sep", " ")
+            end = kwargs.get("end", "\n")
+            s = sep.join(str(a) for a in args) + end
+
+            # spezza su newline per loggare riga per riga
+            for line in s.splitlines():
+                clean = line.rstrip("\r")
+                if clean.strip():
+                    _log_line("INFO", f"[PythonTask] {clean}")
+
+        # Ambiente di esecuzione: print viene shadowata
+        env = {
+            "__name__": "__main__",
+            "print": task_print,
+        }
+
+        try:
+            if self.code:
+                exec(self.code, env)
+            elif self.script_path:
+                with open(self.script_path, "r") as f:
+                    code = f.read()
+                exec(code, env)
+            else:
+                raise ValueError("PythonTask requires either 'code' or 'script_path'.")
+
+            # -----------------------------
+            # 1) Cattura output dal task
+            # -----------------------------
+            output = None
+
+            # Priorità 1: task_output (come stai usando nella DAG)
+            if "task_output" in env:
+                output = env["task_output"]
+
+            # Priorità 2: __output__
+            elif "__output__" in env:
+                output = env["__output__"]
+
+            # Priorità 3: result (pattern: result = ...)
+            elif "result" in env:
+                output = env["result"]
+
+            # Priorità 4: output (fallback)
+            elif "output" in env:
+                output = env["output"]
+
+            # Solo se c'è un output significativo, salvalo nel DB
+            if output is not None:
+                sm.set_task_output(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                    output=output,
+                )
+
+        except Exception:
+            # log eccezione...
+            tb = traceback.format_exc()
+            for line in tb.splitlines():
+                if line.strip():
+                    _log_line("ERROR", f"[PythonTask][exception] {line}")
+            raise

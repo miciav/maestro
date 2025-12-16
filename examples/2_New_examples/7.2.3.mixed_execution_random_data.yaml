@@ -1,0 +1,86 @@
+abstract: |
+  This DAG extends the mixed execution concept by introducing randomness,
+  multi-step processing, and mixed Python/Bash transformations.
+
+  The pipeline:
+    - Generates a random dataset via Python and stores it in random.json
+    - Uses Bash to extract digits and store them in extracted.txt
+    - Uses Python to compute statistics (min, max, sum)
+    - Performs a secondary Bash transformation on the extracted digits
+    - Merges all tasks into a final PrintTask
+
+  This DAG is ideal for testing:
+    - Non-deterministic workflow behavior
+    - Python/Bash interoperability via generated files
+    - Multi-step mixed executor pipelines
+
+dag:
+  name: "mixed_execution_random_data"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Initialization
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting mixed execution random-data pipeline..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) Python generates a random dataset
+    # ---------------------------------------------------------
+    - task_id: "generate_random_data"
+      type: "PythonTask"
+      params:
+        code: |
+          import json, random
+          values = [random.randint(1, 50) for _ in range(10)]
+          with open("random.json", "w") as f:
+            json.dump({"values": values}, f)
+          print("Generated random.json with:", values)
+      dependencies: ["init"]
+
+    # ---------------------------------------------------------
+    # 3) Bash extracts digits from JSON (flat extraction)
+    # ---------------------------------------------------------
+    - task_id: "bash_extract"
+      type: "BashTask"
+      params:
+        command: "grep -o '[0-9]' random.json > extracted.txt"
+      dependencies: ["generate_random_data"]
+
+    # ---------------------------------------------------------
+    # 4) Python computes summary statistics
+    # ---------------------------------------------------------
+    - task_id: "python_stats"
+      type: "PythonTask"
+      params:
+        code: |
+          import json
+          with open("random.json") as f:
+            data = json.load(f)
+          vals = data["values"]
+          print("Statistics: min =", min(vals),
+                "max =", max(vals),
+                "sum =", sum(vals))
+      dependencies: ["bash_extract"]
+
+    # ---------------------------------------------------------
+    # 5) Bash further processes extracted digits
+    # ---------------------------------------------------------
+    - task_id: "bash_count_digits"
+      type: "BashTask"
+      params:
+        command: "echo 'Number of digits:'; wc -l extracted.txt"
+      dependencies: ["python_stats"]
+
+    # ---------------------------------------------------------
+    # 6) Final summary
+    # ---------------------------------------------------------
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Random-data mixed execution pipeline completed!"
+      dependencies: ["bash_count_digits"]

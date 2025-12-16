@@ -1,0 +1,71 @@
+abstract: |
+  This DAG provides a deep, multi-step cron-based pipeline where each heartbeat triggers a long sequence of Bash and Python transformations. It tests orchestrator stability under long-running scheduled flows, accumulated sequential latency, and executor transitions across many steps.
+
+dag:
+  name: "cron_heartbeat_deep_pipeline"
+  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+
+  tasks:
+    # ROOT
+    - task_id: "heartbeat_root"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat: deep pipeline start."
+      dependencies: []
+
+    # ===== BRANCH SYSTEM =====
+    - task_id: "sys_info"
+      type: "BashTask"
+      params:
+        command: "uname -a || echo 'uname not available'"
+      dependencies: ["heartbeat_root"]
+
+    - task_id: "sys_python_analysis"
+      type: "PythonTask"
+      params:
+        code: |
+          print("System analysis (simulated).")
+      dependencies: ["sys_info"]
+
+    # ===== BRANCH APPLICATION (simulated) =====
+    - task_id: "app_status"
+      type: "PythonTask"
+      params:
+        code: |
+          print("App status: simulated check OK.")
+      dependencies: ["heartbeat_root"]
+
+    - task_id: "app_logs_tail"
+      type: "BashTask"
+      params:
+        command: "echo 'Simulated application log tail...'"
+      dependencies: ["app_status"]
+
+    - task_id: "app_python_summary"
+      type: "PythonTask"
+      params:
+        code: |
+          print("Application summary (simulated).")
+      dependencies: ["app_logs_tail"]
+
+    # Final merge of all branches
+    - task_id: "merge_health"
+      type: "PythonTask"
+      params:
+        code: |
+          print("Merging system and application health (simulated). Overall OK.")
+      dependencies: ["sys_python_analysis", "app_python_summary"]
+
+    # LOG ON FILE
+    - task_id: "write_heartbeat_log"
+      type: "BashTask"
+      params:
+        command: "echo \"$(date) - Deep heartbeat completed\" >> /tmp/maestro_deep_heartbeat.log"
+      dependencies: ["merge_health"]
+
+    # FINAL MESSAGE
+    - task_id: "heartbeat_done"
+      type: "PrintTask"
+      params:
+        message: "Deep heartbeat pipeline completed."
+      dependencies: ["write_heartbeat_log"]

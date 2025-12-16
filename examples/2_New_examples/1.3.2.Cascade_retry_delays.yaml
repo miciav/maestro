@@ -1,0 +1,46 @@
+# -------------------------------------------------------------------------------------
+# Cascade with Retries and Delay Logic
+# -------------------------------------------------------------------------------------
+# This DAG tests the system by integrating unstable tasks, automatic retries with configured delays, and a slow pipeline that depends on the success of the critical task. It includes simulated failures (with a 50% probability) to stress the orchestrator's retry logic. The total duration varies based on the retries, ranging from 70 to 100+ seconds. Ideal for validating the robustness of StatusManager, TaskStatus, and logging under error conditions.
+# -------------------------------------------------------------------------------------
+
+dag:
+  name: "cascade_retry_delays"
+  tasks:
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Start cascade"
+      dependencies: []
+
+    - task_id: "unstable_step"
+      type: "PythonTask"
+      params:
+        code: |
+          import time, random
+          print("Unstable step (may fail)...")
+          # time.sleep(15)
+          generate_random = random.random()
+          print(f"Generated: {round(generate_random, 2)}")
+          if generate_random < 0.67:
+              print("Failure occurred")
+              raise Exception("Simulated failure!")
+          print("Unstable succeeded")
+      retries: 3
+      retry_delay: 10
+      dependencies: ["start"]
+
+    - task_id: "slow_processing"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+          print("Slow processing...")
+          # time.sleep(30)
+      dependencies: ["unstable_step"]
+
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Cascade completed"
+      dependencies: ["slow_processing"]

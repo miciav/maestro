@@ -1,0 +1,85 @@
+
+abstract: |
+  A heavy fan‑out/fan‑in DAG structured like a diamond. Four independent branches
+  perform system checks before merging into a final summary task.
+
+dag:
+  name: "bash_chain_heavy_diamond"
+  tasks:
+
+    # Introduction
+    - task_id: "start_scan"
+      type: "PrintTask"
+      params:
+        message: "Starting heavy system scan..."
+      dependencies: []
+
+    # Branch 1
+    - task_id: "files_list"
+      type: "BashTask"
+      params:
+        command: "ls"
+      dependencies: ["start_scan"]
+
+    - task_id: "files_count"
+      type: "BashTask"
+      params:
+        command: "ls -1 | wc -l"
+      dependencies: ["files_list"]
+
+    # Branch 2
+    - task_id: "proc_list"
+      type: "BashTask"
+      params:
+        command: "ps aux | head"
+      dependencies: ["start_scan"]
+
+    - task_id: "proc_count"
+      type: "BashTask"
+      params:
+        command: "ps aux --no-heading | wc -l"
+      dependencies: ["proc_list"]
+
+    # Branch 3
+    - task_id: "disk_usage"
+      type: "BashTask"
+      params:
+        command: "du -sh ."
+      dependencies: ["start_scan"]
+
+    - task_id: "disk_details"
+      type: "BashTask"
+      params:
+        command: "df -h"
+      dependencies: ["disk_usage"]
+
+    # Branch 4
+    - task_id: "ready_to_ping"
+      type: "BashTask"
+      params:
+        command: "echo 'Trying to ping...'; sleep 1"
+      dependencies: ["start_scan"]
+
+    - task_id: "real_ping"
+      type: "BashTask"
+      params:
+        command: "ping -c 4 8.8.8.8"
+      dependencies: ["ready_to_ping"]
+
+    - task_id: "parse_ping"
+      type: "PythonTask"
+      params:
+        code: |
+          print("Ping done - ready for parsing.")
+      dependencies: ["real_ping"]
+
+    # Final merge
+    - task_id: "final_merge"
+      type: "PrintTask"
+      params:
+        message: "All branches completed!"
+      dependencies:
+        - "files_count"
+        - "proc_count"
+        - "disk_details"
+        - "parse_ping"

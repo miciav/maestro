@@ -1,0 +1,117 @@
+abstract: |
+  This difficult-level DAG expands the original conditional branching structure
+  into a *triple-branch execution tree*. After an initialization and a Python-driven
+  condition evaluation stage, the DAG fans out into three independent branches,
+  each with two processing layers mixing BashTask and PythonTask.
+
+  The result is a large fan-out → fan-in structure intended to stress concurrency,
+  scheduling, logging, and orchestrator dependency resolution. All three branches
+  must complete before the pipeline proceeds to the final PrintTask.
+
+dag:
+  name: "conditional_branching_triple_tree"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Initialization message.
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting triple-branch conditional pipeline..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) Python-based condition evaluation — mostly informational.
+    # ---------------------------------------------------------
+    - task_id: "evaluate_condition"
+      type: "PythonTask"
+      params:
+        code: |
+          import random
+          condition = random.choice(["1", "2", "3", "4"])
+          print("Condition evaluated:", condition)
+          task_output = {"branch": condition}
+      dependencies: ["init"]
+
+    # ---------------------------------------------------------
+    # BRANCH 1 — FILE SYSTEM PROCESSING
+    # ---------------------------------------------------------
+
+    - task_id: "branch1_step1"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch 1: Listing files'; ls -1 | head -n 10"
+      dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == '1'"
+
+    - task_id: "branch1_step2"
+      type: "PythonTask"
+      params:
+        code: |
+          import os
+          print('Branch 1 file count:', len(os.listdir('.')))
+      dependencies: ["branch1_step1"]
+
+    # ---------------------------------------------------------
+    # BRANCH 2 — PROCESS INSPECTION
+    # ---------------------------------------------------------
+
+    - task_id: "branch2_step1"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch 2: Checking processes'; ps aux | head -n 5"
+      dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == '2'"
+
+    - task_id: "branch2_step2"
+      type: "PythonTask"
+      params:
+        code: |
+          print('Branch 2: Process summary collected.')
+      dependencies: ["branch2_step1"]
+
+    # ---------------------------------------------------------
+    # BRANCH 3 — TEXT PROCESSING
+    # ---------------------------------------------------------
+
+    - task_id: "branch3_step1"
+      type: "PythonTask"
+      params:
+        code: |
+          words = ['lorem', 'ipsum', 'dolor', 'sit', 'amet']
+          print('Branch 3 words:', words)
+      dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == '3'"
+
+    - task_id: "branch3_step2"
+      type: "PythonTask"
+      params:
+        code: |
+          words = ['lorem', 'ipsum', 'dolor', 'sit', 'amet']
+          uppercase = [w.upper() for w in words]
+          print('Branch 3 uppercase:', uppercase)
+      dependencies: ["branch3_step1"]
+
+    # ---------------------------------------------------------
+    # MERGE: require ALL three branches to finish
+    # ---------------------------------------------------------
+    - task_id: "merge_results"
+      type: "PrintTask"
+      params:
+        message: "All three branches completed. Consolidating results..."
+      dependencies:
+        - "branch1_step2"
+        - "branch2_step2"
+        - "branch3_step2"
+      dependency_policy: none
+
+    # ---------------------------------------------------------
+    # FINAL TASK
+    # ---------------------------------------------------------
+    - task_id: "final"
+      type: "PrintTask"
+      params:
+        message: "Triple-branch conditional pipeline completed successfully!"
+      dependencies: ["merge_results"]

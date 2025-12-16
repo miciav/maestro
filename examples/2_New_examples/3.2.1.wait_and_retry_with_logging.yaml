@@ -1,0 +1,54 @@
+abstract: |
+  This DAG extends the basic retry logic example by adding initialization, multiple unstable Python tasks with different retry behaviors, and a final confirmation step. It is designed to test sequential retry execution, delayed retries, and detailed logging across multiple PythonTask failures. It helps validate orchestrator stability when handling repeated failures and timed retry cycles.
+
+dag:
+  name: "wait_and_retry_with_logging"
+  tasks:
+
+    # Initial message
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Starting retry pipeline..."
+      dependencies: []
+
+    # First unstabile task (fail random 40%)
+    - task_id: "unstable_task_1"
+      type: "PythonTask"
+      params:
+        code: |
+          import random, sys, time
+          generate_random = random.random()
+          print(f"Task 1 - Generated: {round(generate_random, 2)}")
+          if generate_random < 0.4:
+              print("Failure occurred")
+              sys.exit(1)
+          else:
+            print("Task 1 - Success on this run!")
+      retries: 3
+      retry_delay: 2
+      dependencies: ["start"]
+
+    # Second unstable task (fail random 70%)
+    - task_id: "unstable_task_2"
+      type: "PythonTask"
+      params:
+        code: |
+          import random, sys, time
+          generate_random = random.random()
+          print(f"Task 2 - Generated: {round(generate_random, 2)}")
+          if generate_random < 0.7:
+              print("Failure occurred")
+              sys.exit(1)
+          else:
+            print("Task 2 - Success on this run!")
+      retries: 3
+      retry_delay: 2
+      dependencies: ["unstable_task_1"]
+
+    # Final task
+    - task_id: "final_message"
+      type: "PrintTask"
+      params:
+        message: "All retry tasks completed!"
+      dependencies: ["unstable_task_2"]

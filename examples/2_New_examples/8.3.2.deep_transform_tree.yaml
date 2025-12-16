@@ -1,0 +1,52 @@
+abstract: |
+  This DAG models a multi-stage transformation tree with Python and Bash cooperating across nested steps.
+  Raw JSON is transformed into a flat list, reshaped through sorting and deduplication, and finally aggregated into summary metrics.
+  The pipeline demonstrates complex sequential transformations where each stage depends on intermediate file products.
+  It showcases deep, multi-layered processing and reusable artifact generation.
+
+dag:
+  name: "deep_transform_tree"
+
+  tasks:
+
+    - task_id: "raw_json"
+      type: "PythonTask"
+      params:
+        code: |
+          import os, json, random
+          path="/tmp/maestro_data"; os.makedirs(path, exist_ok=True)
+          data={"items":[random.randint(1,50) for _ in range(15)]}
+          json.dump(data, open(f"{path}/raw.json","w"))
+          print("Raw JSON created.")
+      dependencies: []
+
+    - task_id: "extract_list"
+      type: "PythonTask"
+      params:
+        code: |
+          import json
+          vals=json.load(open("/tmp/maestro_data/raw.json"))["items"]
+          open("/tmp/maestro_data/list.txt","w").write("\n".join(map(str,vals)))
+          print("List extracted.")
+      dependencies: ["raw_json"]
+
+    - task_id: "bash_transform"
+      type: "BashTask"
+      params:
+        command: "sort -n /tmp/maestro_data/list.txt | uniq > /tmp/maestro_data/unique_sorted.txt"
+      dependencies: ["extract_list"]
+
+    - task_id: "final_aggregate"
+      type: "PythonTask"
+      params:
+        code: |
+          vals=[int(x) for x in open("/tmp/maestro_data/unique_sorted.txt")]
+          print("Final sum=", sum(vals))
+          print("Count=", len(vals))
+      dependencies: ["bash_transform"]
+
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Deep transform tree completed!"
+      dependencies: ["final_aggregate"]

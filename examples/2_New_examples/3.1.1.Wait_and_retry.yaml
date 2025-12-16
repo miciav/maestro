@@ -5,12 +5,16 @@ dag:
       type: "PythonTask"
       params:
         code: |
-          import random, sys
-          if random.random() < 0.5:
+          import random, sys, time
+          generate_random = random.random()
+          print(f"Generated: {round(generate_random, 2)}")
+          if generate_random < 0.67:
+              print("Failure occurred")
               sys.exit(1)
-          print("Success on this run!")
+          else:
+            print("Success on this run!")
       retries: 3
-      retry_delay: 2
+      retry_delay: 1
       dependencies: []
     - task_id: "final_message"
       type: "PrintTask"

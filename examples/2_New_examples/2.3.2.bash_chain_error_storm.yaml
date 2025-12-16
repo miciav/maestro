@@ -1,0 +1,47 @@
+
+abstract: |
+  This DAG intentionally triggers multiple failures in parallel branches while fail_fast=false ensures the run continues.
+  Useful for stress‑testing logging and resilience mechanisms.
+
+dag:
+  name: "bash_chain_error_storm"
+  config:
+    fail_fast: false
+
+  tasks:
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Starting error storm..."
+      dependencies: []
+
+    - task_id: "valid_ls"
+      type: "BashTask"
+      params:
+        command: "ls -l"
+      dependencies: ["start"]
+
+    - task_id: "invalid_cmd_1"
+      type: "BashTask"
+      params:
+        command: "wrongcmd123"
+      dependencies: ["start"]
+
+    - task_id: "invalid_cmd_2"
+      type: "BashTask"
+      params:
+        command: "another_bad_command"
+      dependencies: ["valid_ls"]
+
+    - task_id: "python_recover"
+      type: "PythonTask"
+      params:
+        code: |
+          print("Recovery executed despite failures.")
+      dependencies: ["invalid_cmd_1", "invalid_cmd_2"]
+
+    - task_id: "end"
+      type: "PrintTask"
+      params:
+        message: "Storm complete!"
+      dependencies: ["python_recover"]

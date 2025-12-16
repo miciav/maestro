@@ -1,0 +1,59 @@
+abstract: |
+  This DAG performs a lightweight system check on each cron heartbeat. It mixes PrintTask, BashTask, and PythonTask to gather minimal environment data without heavy overhead. It is designed to verify low-impact recurring tasks and ensure the orchestrator remains responsive and stable during frequent scheduled triggers.
+
+dag:
+  name: "cron_heartbeat_light_checks"
+  cron_schedule: "*/10 * * * *"  # Ogni 10 minuti
+
+  tasks:
+    # ROOT: start check routine
+    - task_id: "heartbeat_root"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat: starting light system checks..."
+      dependencies: []
+
+    - task_id: "check_cpu"
+      type: "PythonTask"
+      params:
+        code: |
+          import time
+
+          def read_cpu_times():
+            with open("/proc/stat", "r") as f:
+                fields = f.readline().strip().split()[1:]
+                return list(map(int, fields))
+
+          t1 = read_cpu_times()
+          time.sleep(0.1)
+          t2 = read_cpu_times()
+
+          idle1, total1 = t1[3], sum(t1)
+          idle2, total2 = t2[3], sum(t2)
+
+          idle_delta = idle2 - idle1
+          total_delta = total2 - total1
+
+          usage = 100 * (1 - idle_delta / total_delta)
+
+          print(f"CPU Usage (real): {usage:.2f}%")
+      dependencies: ["heartbeat_root"]
+
+    - task_id: "check_disk"
+      type: "BashTask"
+      params:
+        command: "df -h | head -n 5"
+      dependencies: ["heartbeat_root"]
+
+    - task_id: "check_processes"
+      type: "BashTask"
+      params:
+        command: "ps aux | head -n 5"
+      dependencies: ["heartbeat_root"]
+
+    # Final merge
+    - task_id: "heartbeat_summary"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat: all light checks completed."
+      dependencies: ["check_cpu", "check_disk", "check_processes"]

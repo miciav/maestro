@@ -22,7 +22,7 @@
     "git.enableSmartCommit": true,
     "git.confirmSync": false,
     "git.autofetch": true,
-    "workbench.colorTheme": "Dracula Theme",
+    "workbench.colorTheme": "Ubuntu Color VSCode Dark Highlight",
     "workbench.iconTheme": "material-icon-theme",
     "errorLens.enabled": true,
     "breadcrumbs.enabled": true,

@@ -1,0 +1,28 @@
+abstract: |
+  This DAG extends the basic cron heartbeat by adding additional informational tasks executed at every scheduled interval. The pipeline logs a heartbeat message, performs lightweight environment checks, and prints a summary. It is designed to test recurring execution, repeated logging consistency, and stable behavior in cron-driven workflows.
+
+dag:
+  name: "cron_heartbeat_extended"
+  cron_schedule: "*/10 * * * *"  # Each 10 minutes
+
+  tasks:
+    # 1) Initial message to check the start
+    - task_id: "heartbeat_start"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat: Maestro cron job triggered."
+      dependencies: []
+
+    # 2) System check
+    - task_id: "bash_info"
+      type: "BashTask"
+      params:
+        command: "echo 'Time:' $(date); echo 'PWD:' $(pwd)"
+      dependencies: ["heartbeat_start"]
+
+    # 3) Final message
+    - task_id: "heartbeat_end"
+      type: "PrintTask"
+      params:
+        message: "Heartbeat extended: basic info logged."
+      dependencies: ["bash_info"]

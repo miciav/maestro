@@ -1,0 +1,57 @@
+abstract: |
+  This DAG illustrates parallel fan-out and fan-in behavior.
+  Two Python tasks independently generate text files in /tmp/maestro_data/, operating concurrently.
+  Two Bash tasks then read each file individually.
+  Finally, a PrintTask acts as a merge point, executing only after all branches complete.
+  The example emphasizes Maestro’s concurrent execution capabilities and multi-branch synchronization.
+
+dag:
+  name: "parallel_save_and_merge"
+
+  tasks:
+
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting parallel save/load workflow..."
+      dependencies: []
+
+    - task_id: "save_a"
+      type: "PythonTask"
+      params:
+        code: |
+          import os
+          path="/tmp/maestro_data"; os.makedirs(path, exist_ok=True)
+          with open(f"{path}/A.txt", "w") as f:
+              f.write("Alpha content")
+          print("Saved A.txt")
+      dependencies: ["init"]
+
+    - task_id: "save_b"
+      type: "PythonTask"
+      params:
+        code: |
+          import os
+          path="/tmp/maestro_data"; os.makedirs(path, exist_ok=True)
+          with open(f"{path}/B.txt", "w") as f:
+              f.write("Beta content")
+          print("Saved B.txt")
+      dependencies: ["init"]
+
+    - task_id: "read_a"
+      type: "BashTask"
+      params:
+        command: "cat /tmp/maestro_data/A.txt"
+      dependencies: ["save_a"]
+
+    - task_id: "read_b"
+      type: "BashTask"
+      params:
+        command: "cat /tmp/maestro_data/B.txt"
+      dependencies: ["save_b"]
+
+    - task_id: "merge"
+      type: "PrintTask"
+      params:
+        message: "Both A and B files processed!"
+      dependencies: ["read_a", "read_b"]

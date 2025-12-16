@@ -1,0 +1,56 @@
+# -------------------------------------------------------------------------------------
+# Branching, Heavy Waits, and Multi-Join
+# -------------------------------------------------------------------------------------
+# This complex DAG combines multiple branching, slow processing, and a final join phase that depends on distinct processing paths. Each branch contains slow subtasks (20–30 seconds) that are combined into a complex pipeline. It is designed to test system scalability, the management of richer graphs, and the correct synchronization of dependencies in the log stream.
+# -------------------------------------------------------------------------------------
+
+
+dag:
+  name: "branching_waits_and_joins"
+  tasks:
+    - task_id: "start"
+      type: "PrintTask"
+      params:
+        message: "Complex DAG start"
+      dependencies: []
+
+    - task_id: "A1"
+      type: "PythonTask"
+      params:
+        code: |
+          import time; print("Running A1..."); time.sleep(20); print("Task A1 completed.")
+      dependencies: ["start"]
+
+    - task_id: "A2"
+      type: "PythonTask"
+      params:
+        code: |
+          import time; print("Running A2..."); time.sleep(25); print("Task A2 completed.")
+      dependencies: ["start"]
+
+    - task_id: "B1"
+      type: "PythonTask"
+      params:
+        code: |
+          import time; print("Running B1..."); time.sleep(30); print("Task B1 completed.")
+      dependencies: ["A1"]
+
+    - task_id: "B2"
+      type: "PythonTask"
+      params:
+        code: |
+          import time; print("Running B2..."); time.sleep(30); print("Task B2 completed.")
+      dependencies: ["A2"]
+
+    - task_id: "combine"
+      type: "PrintTask"
+      params:
+        message: "Combination done"
+      dependencies: ["B1", "B2"]
+
+    - task_id: "final"
+      type: "PythonTask"
+      params:
+        code: |
+          import time; print("Finalizing..."); time.sleep(15)
+      dependencies: ["combine"]

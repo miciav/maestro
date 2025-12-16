@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, Column, String, ForeignKey, DateTime, Inte
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
 from sqlalchemy.sql import func
 import threading
+import datetime
 
 Base = declarative_base()
 
@@ -38,6 +39,7 @@ class TaskORM(Base):
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
     thread_id = Column(String)
+    output = Column(Text, nullable=True)
     insertion_order = Column(Integer)
     execution = relationship("ExecutionORM", back_populates="tasks")
 
@@ -50,7 +52,11 @@ class LogORM(Base):
     task_id = Column(String)
     level = Column(String)
     message = Column(Text)
-    timestamp = Column(DateTime, server_default=func.now())
+    timestamp = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,      # ✔ corretto
+        nullable=False
+    )
     thread_id = Column(String)
 
 def create_db_engine(db_path='maestro.db'):

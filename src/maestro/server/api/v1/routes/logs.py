@@ -47,7 +47,9 @@ def get_orchestrator():
 
 # --- Endpoints ---
 
-@router.get("/{dag_id}", response_model=LogsResponse)
+# @router.get("/{dag_id}", response_model=LogsResponse)
+
+@router.get("/{dag_id}")
 async def get_dag_logs(
     dag_id: str, 
     execution_id: Optional[str] = None,
@@ -77,12 +79,15 @@ async def get_dag_logs(
                 ) for log in logs
             ]
             
-            return LogsResponse(
-                dag_id=dag_id,
-                execution_id=execution_id,
-                logs=log_entries,
-                total_count=len(log_entries)
-            )
+            #return LogsResponse(
+                #dag_id=dag_id,
+                #execution_id=execution_id,
+                #logs=log_entries,
+                #total_count=len(log_entries)
+            #)
+
+            return log_entries
+
     except Exception as e:
         logger.error(f"Failed to get DAG logs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -156,57 +161,53 @@ async def stream_dag_logs(
 
 @router.get("/{dag_id}/attach")
 async def attach_dag_logs(
-    dag_id: str, 
-    execution_id: Optional[str] = None, 
+    dag_id: str,
+    execution_id: Optional[str] = None,
     task_filter: Optional[str] = Query(None, description="Filter logs by task ID"),
     level_filter: Optional[str] = Query(None, description="Filter logs by level (INFO, WARNING, ERROR)"),
     orchestrator: Orchestrator = Depends(get_orchestrator)
 ):
     """
-    Attaches to the live log stream of a DAG execution (alias for stream).
-    Compatible with Docker-style attach API.
+    Minimal patch: stabilizes streaming by fixing ordering & cursor management.
+    No DB changes required.
     """
+
     async def log_streamer():
+        last_seen = set()
         last_timestamp = None
-        displayed_logs = set()
-        
+
         while True:
             try:
                 with orchestrator.status_manager as sm:
-                    logs = sm.get_execution_logs(dag_id, execution_id, limit=100)
-                    
-                    # Apply filters
-                    if task_filter:
-                        logs = [log for log in logs if log["task_id"] == task_filter]
-                    if level_filter:
-                        logs = [log for log in logs if log["level"].upper() == level_filter.upper()]
-                    
-                    # Filter for new logs only
+                    logs = sm.get_execution_logs(dag_id, execution_id, limit=200)
+
+                    # Ordina dal più vecchio al più recente
+                    logs = sorted(logs, key=lambda x: x["timestamp"])
+
                     new_logs = []
                     for log in logs:
-                        log_id = f"{log['timestamp']}_{log['task_id']}_{log['level']}_{log['message'][:50]}"
-                        
-                        if log_id not in displayed_logs:
-                            if last_timestamp is None or log["timestamp"] > last_timestamp:
-                                new_logs.append(log)
-                                displayed_logs.add(log_id)
-                                last_timestamp = log["timestamp"]
-                    
-                    # Send new logs in simple JSON format
-                    for log in reversed(new_logs):
+                        key = f"{log['timestamp']}-{log['task_id']}-{log['message'][:50]}"
+                        if key not in last_seen:
+                            new_logs.append(log)
+                            last_seen.add(key)
+                            last_timestamp = log["timestamp"]
+
+                    # STREAM DEI LOG
+                    for log in new_logs:
                         yield f"data: {json.dumps(log)}\n\n"
-                    
-                    # Clean up displayed_logs set to prevent memory issues
-                    if len(displayed_logs) > 1000:
-                        displayed_logs.clear()
-                        last_timestamp = None
-                    
-                    await asyncio.sleep(1)
-                    
+
+                    # 🔥 TERMINAZIONE AUTOMATICA STREAM
+                    exec_info = sm.get_latest_execution(dag_id)
+                    if exec_info and exec_info["status"] in ("completed", "failed", "cancelled"):
+                        yield 'data: {"event": "DAG_COMPLETED"}\n\n'
+                        return
+
+                await asyncio.sleep(0.3)
+
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                break
-    
+                return
+
     return StreamingResponse(
         log_streamer(),
         media_type="text/event-stream",

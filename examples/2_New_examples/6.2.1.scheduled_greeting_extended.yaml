@@ -1,0 +1,59 @@
+abstract: |
+  This DAG extends the basic scheduled_greeting example by adding multiple
+  steps that validate and log system information immediately after the DAG
+  triggers at its scheduled start_time.
+
+  The pipeline:
+    - Begins with a PrintTask announcing execution
+    - Logs the system time using a BashTask
+    - Runs a PythonTask that performs a small diagnostic check
+    - Ends with a closing PrintTask
+
+  This design tests:
+    - Scheduled one-shot execution
+    - Multi-step sequential flows after a scheduled trigger
+    - Mixed Print/Bash/Python execution following start_time activation
+
+dag:
+  name: "scheduled_greeting_extended"
+  start_time: "2025-10-23T09:00:00"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Initialization message triggered at scheduled time
+    # ---------------------------------------------------------
+    - task_id: "start_message"
+      type: "PrintTask"
+      params:
+        message: "Scheduled greeting pipeline started!"
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) Simple Bash command to show the actual system date/time
+    # ---------------------------------------------------------
+    - task_id: "show_time"
+      type: "BashTask"
+      params:
+        command: "echo 'Current system time: ' $(date)"
+      dependencies: ["start_message"]
+
+    # ---------------------------------------------------------
+    # 3) Python diagnostic check
+    # ---------------------------------------------------------
+    - task_id: "python_check"
+      type: "PythonTask"
+      params:
+        code: |
+          import platform
+          print('Python check executed. Python version:', platform.python_version())
+      dependencies: ["show_time"]
+
+    # ---------------------------------------------------------
+    # 4) Final closing message
+    # ---------------------------------------------------------
+    - task_id: "finish"
+      type: "PrintTask"
+      params:
+        message: "Extended scheduled greeting pipeline completed."
+      dependencies: ["python_check"]

@@ -1,0 +1,76 @@
+abstract: |
+  This DAG expands the original conditional branching concept by incorporating
+  a Bash-based condition evaluation. Instead of using Python to decide the
+  branching factor, a BashTask randomly selects a branch and prints the outcome.
+
+  The pipeline includes:
+    - A PrintTask initializer
+    - A BashTask that computes a pseudo-random branch selection
+    - Two parallel branches: one focused on disk usage, the other on directory structure
+    - A final merge task that acknowledges completion of both branches
+
+  Even though the BashTask “selects” a branch, both branches run in parallel.
+  This design stresses the orchestrator’s scheduler and ensures the system
+  handles branching regardless of executor type.
+
+dag:
+  name: "conditional_branching_with_bash"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Initialization: simple starting message
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting conditional branching (Bash-based)..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) Condition evaluation done inside Bash:
+    #    RANDOM % 2 → 0 or 1 determines “branch A” or “branch B”
+    #    Here, both branches will still run independently, but it
+    #    tests Bash logging, randomness, and execution flow.
+    # ---------------------------------------------------------
+    - task_id: "bash_condition"
+      type: "BashTask"
+      params:
+        command: |
+          if [ $((RANDOM % 2)) -eq 0 ]; then
+            echo "Condition result: A"
+            echo "OUTPUT: A"
+          else
+            echo "Condition result: B"
+            echo "OUTPUT: B"
+          fi
+      dependencies: ["init"]
+
+    # ---------------------------------------------------------
+    # 3) Branch A: performs disk-related operations
+    # ---------------------------------------------------------
+    - task_id: "branch_a_disk_usage"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch A: Disk usage'; df -h | head -n 5"
+      dependencies: ["bash_condition"]
+      condition: "output_of('bash_condition') == 'A'"
+
+    # ---------------------------------------------------------
+    # 4) Branch B: explores directory structure
+    # ---------------------------------------------------------
+    - task_id: "branch_b_list_dirs"
+      type: "BashTask"
+      params:
+        command: "echo 'Branch B: Directory structure'; ls -d */ 2>/dev/null || echo 'No directories'"
+      dependencies: ["bash_condition"]
+      condition: "output_of('bash_condition') == 'B'"
+
+    # ---------------------------------------------------------
+    # 5) Merge: both branches must complete before continuing
+    # ---------------------------------------------------------
+    - task_id: "final_message"
+      type: "PrintTask"
+      params:
+        message: "Conditional branching (Bash-based) completed!"
+      dependencies: ["branch_a_disk_usage", "branch_b_list_dirs"]

@@ -1,0 +1,57 @@
+abstract: |
+  This DAG enhances the scheduled greeting concept by adding a small diagnostic pipeline that runs immediately after the scheduled start_time. It mixes Python, Bash, and Print tasks to validate directory state, create small data, and log useful information before producing a final scheduled greeting message.
+
+  The flow:
+    - Scheduled PrintTask announces execution
+    - BashTask checks the number of files in the working directory
+    - PythonTask performs a trivial mathematical check
+    - PrintTask emits a localized greeting
+
+  This DAG tests:
+    - Sequential validation flow (Bash → Python → Print)
+    - Proper execution after scheduled activation
+    - Mixing of executors in a simple but meaningful chain
+
+dag:
+  name: "scheduled_greeting_with_checks"
+  start_time: "2025-10-23T09:00:00"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Start message triggered at schedule time
+    # ---------------------------------------------------------
+    - task_id: "start_message"
+      type: "PrintTask"
+      params:
+        message: "Scheduled run initiated: performing system checks..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) Bash task: count files in current directory
+    # ---------------------------------------------------------
+    - task_id: "count_files"
+      type: "BashTask"
+      params:
+        command: "echo 'Files in working dir:'; ls -1 | wc -l"
+      dependencies: ["start_message"]
+
+    # ---------------------------------------------------------
+    # 3) Python diagnostic.
+    # ---------------------------------------------------------
+    - task_id: "python_diag"
+      type: "PythonTask"
+      params:
+        code: |
+          import math
+          print("Python diagnostic: sqrt(144) is", math.sqrt(144))
+      dependencies: ["count_files"]
+
+    # ---------------------------------------------------------
+    # 4) Final greeting output
+    # ---------------------------------------------------------
+    - task_id: "greet"
+      type: "PrintTask"
+      params:
+        message: "System checks passed. Scheduled greeting: Good morning!"
+      dependencies: ["python_diag"]

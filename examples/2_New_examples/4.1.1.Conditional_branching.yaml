@@ -1,0 +1,28 @@
+dag:
+  tasks:
+    - task_id: check_condition
+      type: "PythonTask"
+      code: |
+        import random
+        random_number = random.random()
+        print("Random number:", round(random_number, 2))
+        branch = "branch_a" if random_number > 0.5 else "branch_b"
+        print(f"Next step: {branch}")
+        result = {"branch": branch}
+
+    - task_id: branch_a
+      type: "PrintTask"
+      message: "Eseguo branch A"
+      dependencies: [check_condition]
+      condition: "output_of('check_condition')['branch'] == 'branch_a'"
+
+    - task_id: branch_b
+      type: "PrintTask"
+      message: "Eseguo branch B"
+      dependencies: [check_condition]
+      condition: "output_of('check_condition')['branch'] == 'branch_b'"
+    - task_id: end_message
+      type: "PrintTask"
+      params:
+        message: "End of DAG - success"
+      dependencies: [branch_a, branch_b]

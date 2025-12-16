@@ -1,0 +1,84 @@
+abstract: |
+  This DAG extends the conditional branching concept by introducing a Python-driven
+  evaluation stage followed by *two parallel Python processing branches*. This
+  pushes the orchestrator’s parallel execution and logging logic without adding
+  excessive structural complexity.
+
+  The pipeline performs:
+    - Initialization via PrintTask
+    - A PythonTask that evaluates a random condition (A or B)
+    - Two parallel Python tasks:
+        * branch_a_process — performs numeric computations
+        * branch_b_process — performs string transformations
+    - A final PrintTask executed only after both branches complete
+
+  Unlike the original conditional branching DAG, here the branches perform
+  meaningful Python processing, making it a more realistic mid-level test
+  of Python executor behavior, concurrency, and DAG synchronization.
+
+dag:
+  name: "conditional_branching_parallel_python"
+
+  tasks:
+
+    # ---------------------------------------------------------
+    # 1) Initialization — just a clean start.
+    # ---------------------------------------------------------
+    - task_id: "init"
+      type: "PrintTask"
+      params:
+        message: "Starting conditional branching (parallel Python)..."
+      dependencies: []
+
+    # ---------------------------------------------------------
+    # 2) Python-based condition evaluation.
+    #    The condition is not used to activate/deactivate branches,
+    #    but it is logged to simulate real decision-making behavior.
+    # ---------------------------------------------------------
+    - task_id: "evaluate_condition"
+      type: "PythonTask"
+      params:
+        code: |
+          import random
+          random_value = round(random.random(), 2)
+          print("Value:", random_value)
+          condition = "A" if random_value > 0.5 else "B"
+          print(f"Condition evaluated: {condition}")
+          task_output = {"branch": condition}
+      dependencies: ["init"]
+
+    # ---------------------------------------------------------
+    # 3) Branch A — numeric computation.
+    # ---------------------------------------------------------
+    - task_id: "branch_a_process"
+      type: "PythonTask"
+      params:
+        code: |
+          import math
+          nums = [1, 2, 3, 4, 5]
+          squares = [n*n for n in nums]
+          print("Branch A squares:", squares)
+      dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'A'"
+
+    # ---------------------------------------------------------
+    # 4) Branch B — simple text processing.
+    # ---------------------------------------------------------
+    - task_id: "branch_b_process"
+      type: "PythonTask"
+      params:
+        code: |
+          words = ["alpha", "beta", "gamma"]
+          upper = [w.upper() for w in words]
+          print("Branch B uppercase:", upper)
+      dependencies: ["evaluate_condition"]
+      condition: "output_of('evaluate_condition')['branch'] == 'B'"
+
+    # ---------------------------------------------------------
+    # 5) Final merge.
+    # ---------------------------------------------------------
+    - task_id: "final_message"
+      type: "PrintTask"
+      params:
+        message: "Parallel Python branching completed successfully!"
+      dependencies: ["branch_a_process", "branch_b_process"]

@@ -1,0 +1,37 @@
+
+abstract: |
+  This DAG introduces branching: one branch lists files, another lists processes.
+  Each branch performs its own post-processing before merging into a final print task.
+
+dag:
+  name: "bash_chain_branch"
+  tasks:
+    - task_id: "list_files"
+      type: "BashTask"
+      params:
+        command: "ls -a"
+      dependencies: []  # Root branch A
+
+    - task_id: "list_processes"
+      type: "BashTask"
+      params:
+        command: "ps aux | head"
+      dependencies: []  # Root branch B
+
+    - task_id: "count_file_lines"
+      type: "BashTask"
+      params:
+        command: "ls -1 | wc -l"
+      dependencies: ["list_files"]
+
+    - task_id: "count_processes"
+      type: "BashTask"
+      params:
+        command: "ps aux --no-heading | wc -l"
+      dependencies: ["list_processes"]
+
+    - task_id: "final_message"
+      type: "PrintTask"
+      params:
+        message: "Files and process info collected!"
+      dependencies: ["count_file_lines", "count_processes"]
