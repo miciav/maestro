@@ -158,6 +158,7 @@ class DAG:
             "dag_id": self.dag_id,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "cron_schedule": self.cron_schedule,
+            "fail_fast": self.fail_fast,
             "tasks": {task_id: task.to_dict() for task_id, task in self.tasks.items()},
         }
 

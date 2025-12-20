@@ -511,10 +511,10 @@ class Orchestrator:
                     )
 
                     # ================================
-                    # ### PATCH 1 — FAIL-FAST HANDLING
+                    # ### PATCH 1 — FAIL-FAST HANDLING — SOFT STOP ASSOLUTO
                     # ================================
-                    if stop_scheduling and not is_final:
-                        # 🔥 task NON finale → deve diventare terminale
+
+                    if stop_scheduling and dag.fail_fast:
                         task.status = TaskStatus.SKIPPED
                         sm.set_task_status(dag_id, task_id, "skipped", execution_id)
                         skipped_tasks.add(task_id)
@@ -524,7 +524,7 @@ class Orchestrator:
                             status_callback()
 
                         self.logger.warning(
-                            f"[FAIL-FAST] Skipping non-final task {task_id}"
+                            f"[FAIL-FAST] Skipping task {task_id} (soft stop)"
                         )
                         continue
 
