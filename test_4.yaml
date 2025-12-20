@@ -13,10 +13,14 @@ dag:
 
     - task_id: exit1
       type: PrintTask
+      params:
+        message: "Task A completed"
       dependencies: ["a"]
       dependency_policy: "none"
 
     - task_id: exit2
       type: PrintTask
+      params:
+        message: "Task B completed"
       dependencies: ["b"]
       dependency_policy: "none"

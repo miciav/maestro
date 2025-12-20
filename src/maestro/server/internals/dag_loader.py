@@ -155,13 +155,26 @@ class DAGLoader:
         )
 
     def load_dag_from_dict(self, dag_dict: Dict[str, Any]) -> DAG:
-        """Load a DAG from a dictionary representation."""
         dag_id = dag_dict.get("dag_id", "default_dag")
         start_time_str = dag_dict.get("start_time")
         start_time = self._parse_datetime(start_time_str) if start_time_str else None
         cron_schedule = dag_dict.get("cron_schedule")
 
-        dag = DAG(dag_id=dag_id, start_time=start_time, cron_schedule=cron_schedule)
+        fail_fast = dag_dict.get("fail_fast", False)
+        if not isinstance(fail_fast, bool):
+            raise ValueError("fail_fast must be a boolean")
+
+        dag = DAG(
+            dag_id=dag_id,
+            start_time=start_time,
+            cron_schedule=cron_schedule,
+            fail_fast=fail_fast,
+        )
+
+        print(
+            f"[DAG LOADER] load_dag_from_dict dag_id={dag.dag_id} "
+            f"fail_fast={dag.fail_fast}"
+        )
 
         # Get tasks from the dictionary
         tasks = dag_dict.get("tasks", {})

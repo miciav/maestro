@@ -210,7 +210,6 @@ class Orchestrator:
         dag: DAG,
         execution_id: str = None,
         resume: bool = False,
-        fail_fast: bool = True,
         status_callback=None,
         dag_filepath: Optional[str] = None,  # Add this parameter
     ) -> str:
@@ -248,11 +247,32 @@ class Orchestrator:
         # the body of the thread
         def execute():
             try:
+
+                self.logger.warning(
+                    "[DAG DEBUG] "
+                    f"dag_id={dag.dag_id} "
+                    f"fail_fast={dag.fail_fast} "
+                    f"tasks={[t.task_id for t in dag.tasks.values()]}"
+                )
+
+                for t in dag.tasks.values():
+                    pol = getattr(t, "dependency_policy", None)
+                    self.logger.warning(
+                        f"[DAG DEBUG] task={t.task_id} "
+                        f"deps={t.dependencies} "
+                        f"policy={pol} "
+                        f"policy_type={type(pol)} "
+                        f"is_final={getattr(t, 'is_final', False)}"
+                    )
+
+                self.logger.warning(
+                    f"[FAIL_FAST RESOLVE] dag_id={dag.dag_id} execution_id={execution_id} dag.fail_fast={getattr(dag, 'fail_fast', None)}"
+                )
+
                 self.run_dag(
                     dag,
                     execution_id=execution_id,
                     resume=resume,
-                    fail_fast=fail_fast,
                     status_callback=status_callback,
                     stop_event=stop_event,
                 )
@@ -261,6 +281,12 @@ class Orchestrator:
                     final_status = dag.evaluate_final_status(
                         status_manager=sm,
                         execution_id=execution_id,
+                    )
+
+                    self.logger.warning(
+                        f"[DAG FINAL] execution_id={execution_id} "
+                        f"final_status={final_status} "
+                        f"tasks_status={sm.get_dag_status(dag.dag_id, execution_id)}"
                     )
 
                     dag.status = final_status
@@ -280,7 +306,7 @@ class Orchestrator:
                     sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
 
                 self.logger.error(f"DAG {dag.dag_id} execution failed: {e}")
-                if fail_fast:
+                if dag.fail_fast:
                     raise
             finally:
                 # Clean up the stop event
@@ -294,7 +320,6 @@ class Orchestrator:
         dag: DAG,
         execution_id: str = None,
         resume: bool = False,
-        fail_fast: bool = True,
         status_manager=None,
         progress_tracker=None,
         status_callback=None,
@@ -345,7 +370,6 @@ class Orchestrator:
                 dag=dag,
                 execution_id=execution_id,
                 resume=resume,
-                fail_fast=fail_fast,
                 status_callback=status_callback,
                 progress_tracker=progress_tracker,
                 stop_event=stop_event,
@@ -365,7 +389,6 @@ class Orchestrator:
         dag: DAG,
         execution_id: str,
         resume: bool,
-        fail_fast: bool,
         status_callback,
         progress_tracker,
         stop_event: Optional[threading.Event],
@@ -380,6 +403,10 @@ class Orchestrator:
         """
 
         dag_id = dag.dag_id
+
+        self.logger.warning(
+            f"[DAG FAIL_FAST] dag_id={dag_id} execution_id={execution_id} dag.fail_fast={getattr(dag, 'fail_fast', None)}"
+        )
 
         # Initialize task tracking sets
         pending_tasks: Set[str] = set(dag.tasks.keys())
@@ -410,6 +437,17 @@ class Orchestrator:
 
             # Main execution loop
             while pending_tasks or running_tasks:
+
+                self.logger.warning(
+                    "[LOOP SNAPSHOT] "
+                    f"pending={list(pending_tasks)} "
+                    f"running={list(running_tasks.keys())} "
+                    f"completed={list(completed_tasks)} "
+                    f"failed={list(failed_tasks)} "
+                    f"skipped={list(skipped_tasks)} "
+                    f"stop_scheduling={stop_scheduling}"
+                )
+
                 # Check for cancellation
                 if stop_event and stop_event.is_set():
                     self.logger.info(
@@ -445,9 +483,9 @@ class Orchestrator:
 
                             if dag.fail_fast:
                                 stop_scheduling = True
+
                                 self.logger.warning(
-                                    f"Fail-fast triggered by task {task_id}. "
-                                    "No new tasks will be scheduled; waiting for running tasks to finish."
+                                    f"[DAG FAIL_FAST] dag_id={dag_id} execution_id={execution_id} dag.fail_fast={getattr(dag, 'fail_fast', None)}"
                                 )
 
                 # Build upstream status dict (simple string statuses)
@@ -460,17 +498,48 @@ class Orchestrator:
                 # Loop sui task pending
                 for task_id in list(pending_tasks):
 
-                    if stop_scheduling:
-                        break  # ⛔ stop scheduling new tasks
-
                     task = dag.tasks[task_id]
+                    is_final = bool(getattr(task, "is_final", False))
 
+                    pol = getattr(task, "dependency_policy", None)
+
+                    self.logger.warning(
+                        f"[TASK EVAL] task={task_id} "
+                        f"policy={pol} "
+                        f"is_final={is_final} "
+                        f"stop_scheduling={stop_scheduling}"
+                    )
+
+                    # ================================
+                    # ### PATCH 1 — FAIL-FAST HANDLING
+                    # ================================
+                    if stop_scheduling and not is_final:
+                        # 🔥 task NON finale → deve diventare terminale
+                        task.status = TaskStatus.SKIPPED
+                        sm.set_task_status(dag_id, task_id, "skipped", execution_id)
+                        skipped_tasks.add(task_id)
+                        pending_tasks.remove(task_id)
+
+                        if status_callback:
+                            status_callback()
+
+                        self.logger.warning(
+                            f"[FAIL-FAST] Skipping non-final task {task_id}"
+                        )
+                        continue
+
+                    # ================================
+                    # ### PATCH 2 — NORMALE VALUTAZIONE
+                    # ================================
                     action = evaluate_dependencies(
                         task, upstream_statuses, sm, dag_id, execution_id
                     )
 
+                    self.logger.warning(
+                        f"[TASK DECISION] task={task_id} action={action}"
+                    )
+
                     if action == "run":
-                        # Submit task for execution
                         self.logger.info(f"Submitting task {task_id} for execution")
                         future = self.task_executor.submit(
                             self._execute_task_async,
@@ -485,18 +554,17 @@ class Orchestrator:
                         pending_tasks.remove(task_id)
 
                     elif action == "wait":
-                        # leave in pending; continue to next task
                         continue
 
                     elif action == "skip":
-                        # mark skipped in memory and persist
                         task.status = TaskStatus.SKIPPED
                         sm.set_task_status(dag_id, task_id, "skipped", execution_id)
                         skipped_tasks.add(task_id)
-                        if task_id in pending_tasks:
-                            pending_tasks.remove(task_id)
+                        pending_tasks.remove(task_id)
+
                         if status_callback:
                             status_callback()
+
                         self.logger.info(f"Task {task_id} skipped (policy/condition)")
 
                 # Evita busy-waiting: aspetta un breve intervallo se ci sono task attivi

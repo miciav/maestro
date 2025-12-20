@@ -35,7 +35,7 @@ class DAGSubmissionRequest(BaseModel):
     dag_file_path: str
     dag_id: Optional[str] = None
     resume: bool = False
-    fail_fast: bool = True
+    fail_fast: Optional[bool] = None
 
 
 class DAGSubmissionResponse(BaseModel):

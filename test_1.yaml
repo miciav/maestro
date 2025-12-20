@@ -1,5 +1,6 @@
 dag:
   name: "test_fail_fast_off"
+  fail_fast: true
   tasks:
     - task_id: start
       type: PrintTask

@@ -35,7 +35,7 @@ class DAGCreateResponse(BaseModel):
 
 class DAGRunRequest(BaseModel):
     resume: bool = False
-    fail_fast: bool = True
+    fail_fast: Optional[bool] = None
 
 
 class DAGRunResponse(BaseModel):
@@ -49,7 +49,7 @@ class DAGSubmissionRequest(BaseModel):
     dag_file_path: str
     dag_id: Optional[str] = None
     resume: bool = False
-    fail_fast: bool = True
+    fail_fast: Optional[bool] = None
 
 
 class DAGSubmissionResponse(BaseModel):
@@ -164,12 +164,16 @@ async def create_dag(
 async def run_dag(
     dag_id: str,
     request: DAGRunRequest,
-    background_tasks: BackgroundTasks,
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """
     Runs a previously created DAG.
     """
+
+    logger.warning(
+        f"[DEBUG dags.py] file={__file__} line={run_dag.__code__.co_firstlineno}"
+    )
+
     try:
         with orchestrator.status_manager as sm:
             dag_definition = sm.get_dag_definition(dag_id)
@@ -190,12 +194,26 @@ async def run_dag(
 
         dag = orchestrator.dag_loader.load_dag_from_dict(dag_definition)
 
-        # Run the DAG with the determined execution ID
+        # snapshot PRIMA dell’override (valore YAML / stored)
+        yaml_or_stored_fail_fast = getattr(dag, "fail_fast", False)
+
+        # override SOLO se esplicito
+        if request.fail_fast is not None:
+            dag.fail_fast = request.fail_fast
+
+        logger.warning(
+            "[FAIL_FAST RESOLVE] "
+            f"dag_id={dag.dag_id} "
+            f"yaml_or_stored={yaml_or_stored_fail_fast} "
+            f"request_fail_fast={request.fail_fast} "
+            f"resolved={dag.fail_fast}"
+        )
+
         orchestrator.run_dag_in_thread(
             dag=dag,
             execution_id=execution_id,
             resume=request.resume,
-            fail_fast=request.fail_fast,
+            # ❌ NON passare fail_fast come parametro “parallelo”
         )
 
         return DAGRunResponse(
@@ -359,8 +377,12 @@ async def resume_dag(
 
         dag = orchestrator.dag_loader.load_dag_from_dict(dag_definition)
 
+        # su resume puoi decidere una policy:
+        # - o rispetti YAML
+        # - o forzi fail_fast=True
         new_execution_id = orchestrator.run_dag_in_thread(
-            dag=dag, resume=True, fail_fast=True  # Defaulting to fail_fast on resume
+            dag=dag,
+            resume=True,
         )
 
         return DAGResumeResponse(
