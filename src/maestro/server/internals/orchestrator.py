@@ -191,6 +191,16 @@ class Orchestrator:
 
         try:
             dag = self.load_dag_from_file(dag_filepath, dag_id=dag_id)
+
+            print(
+                f"[DEBUG DAG] dag_id={dag.dag_id} fail_fast={dag.fail_fast}", flush=True
+            )
+
+            print(
+                f"[DEBUG DAG] explicit_exit_tasks={dag.get_explicit_exit_tasks()}",
+                flush=True,
+            )
+
             self.run_dag_in_thread(dag, dag_filepath=dag_filepath)
         except Exception as e:
             self.logger.error(f"Failed to execute scheduled DAG {dag_id}: {e}")
@@ -247,35 +257,18 @@ class Orchestrator:
                     stop_event=stop_event,
                 )
 
-                # After execution, check the final status of tasks
                 with self.status_manager as sm:
-                    final_statuses = sm.get_dag_status(dag.dag_id, execution_id)
-
-                    # Count task statuses
-                    has_failed = any(
-                        status == "failed" for status in final_statuses.values()
-                    )
-                    has_running = any(
-                        status == "running" for status in final_statuses.values()
+                    final_status = dag.evaluate_final_status(
+                        status_manager=sm,
+                        execution_id=execution_id,
                     )
 
-                    # Determine overall DAG status
-                    if has_running:
-                        # Should not happen after execution completes, but handle it
-                        dag.status = DAGStatus.RUNNING
-                        sm.update_dag_execution_status(
-                            dag.dag_id, execution_id, "running"
-                        )
-                    elif has_failed:
-                        dag.status = DAGStatus.FAILED
-                        sm.update_dag_execution_status(
-                            dag.dag_id, execution_id, "failed"
-                        )
-                    else:
-                        dag.status = DAGStatus.COMPLETED
-                        sm.update_dag_execution_status(
-                            dag.dag_id, execution_id, "completed"
-                        )
+                    dag.status = final_status
+                    sm.update_dag_execution_status(
+                        dag.dag_id,
+                        execution_id,
+                        final_status.value,
+                    )
 
             except Exception as e:
                 with self.status_manager as sm:
@@ -395,6 +388,9 @@ class Orchestrator:
         failed_tasks: Set[str] = set()
         skipped_tasks: Set[str] = set()
 
+        # 🆕 FAIL-FAST SOFT STOP FLAG
+        stop_scheduling = False
+
         with self.status_manager as sm:
             # Handle resume - mark already completed tasks
             if resume:
@@ -439,16 +435,20 @@ class Orchestrator:
                     for task_id, future in completed_futures:
                         del running_tasks[task_id]
                         try:
-                            future.result()  # This will raise any exceptions from the task
+                            future.result()
                             completed_tasks.add(task_id)
                             self.logger.info(f"Task {task_id} completed successfully")
+
                         except Exception as e:
                             failed_tasks.add(task_id)
                             self.logger.error(f"Task {task_id} failed: {e}")
-                            if fail_fast:
-                                # Cancel all running tasks and stop
-                                self._cancel_running_tasks(running_tasks)
-                                raise Exception(f"Task {task_id} failed: {e}")
+
+                            if dag.fail_fast:
+                                stop_scheduling = True
+                                self.logger.warning(
+                                    f"Fail-fast triggered by task {task_id}. "
+                                    "No new tasks will be scheduled; waiting for running tasks to finish."
+                                )
 
                 # Build upstream status dict (simple string statuses)
                 upstream_statuses = {tid: "completed" for tid in completed_tasks}
@@ -459,9 +459,12 @@ class Orchestrator:
 
                 # Loop sui task pending
                 for task_id in list(pending_tasks):
+
+                    if stop_scheduling:
+                        break  # ⛔ stop scheduling new tasks
+
                     task = dag.tasks[task_id]
 
-                    # Call evaluate_dependencies with StatusManager + ids so it can evaluate condition/output_of()
                     action = evaluate_dependencies(
                         task, upstream_statuses, sm, dag_id, execution_id
                     )
@@ -905,23 +908,65 @@ def evaluate_dependencies(
     # ---------------------------------------------------------
     # 3) Gestione condition
     # ---------------------------------------------------------
+
     if condition:
-        try:
 
-            def output_of(tid):
+        def output_of(tid):
+            # output "safe": se non c'è output (task failed o non scritto), torna None
+            try:
                 return sm.get_task_output(dag_id, tid, execution_id)
+            except Exception:
+                print(
+                    f"[eval_deps - def output_of(tid)] task={task.task_id} policy={policy} deps={dependencies} "
+                    f"upstream={upstream_statuses} condition={condition!r}"
+                )
+                return None
 
-            env = {"output_of": output_of}
-            if not eval(condition, {}, env):
+        env = {"output_of": output_of}
+
+        try:
+            cond_value = eval(condition, {}, env)
+
+            # False esplicito => skip (anche con policy none)
+            if not cond_value:
+                print(
+                    f"[eval_deps - try: cond_value] task={task.task_id} policy={policy} deps={dependencies} "
+                    f"upstream={upstream_statuses} condition={condition!r}"
+                )
                 return "skip"
 
         except Exception as e:
+
             print(
                 f"[evaluate_dependencies] Error evaluating condition for {task.task_id}: {e}"
             )
+
+            # QUI la differenza chiave:
+            # - policy none: condition non valutabile -> NON blocca -> RUN
+            # - altre policy: comportamento conservativo -> SKIP
+            if policy == "none":
+
+                print(
+                    f"[eval_deps - if policy == 'none':] task={task.task_id} policy={policy} deps={dependencies} "
+                    f"upstream={upstream_statuses} condition={condition!r}"
+                )
+
+                return "run"
+
+            print(
+                f"[eval_deps - generale di except Exception as e] task={task.task_id} policy={policy} deps={dependencies} "
+                f"upstream={upstream_statuses} condition={condition!r}"
+            )
+
             return "skip"
 
     # ---------------------------------------------------------
     # 4) Tutto OK → RUN
     # ---------------------------------------------------------
+
+    print(
+        f"[eval_deps - before 'run'] task={task.task_id} policy={policy} deps={dependencies} "
+        f"upstream={upstream_statuses} condition={condition!r}"
+    )
+
     return "run"

@@ -48,5 +48,15 @@ class BaseTask(Task):
         ),
     )
 
+    # 🏁 Exit-task (sentinel)
+    is_final: bool = Field(
+        default=False,
+        description=(
+            "Marks this task as a final (exit) task for the DAG. "
+            "If one or more tasks are marked as final, the DAG final status "
+            "will be determined based on their outcome."
+        ),
+    )
+
     def execute_local(self):
         raise NotImplementedError("Subclasses must implement this method.")

@@ -10,7 +10,7 @@ abstract: |
 
 dag:
   name: "conditional_branching_triple_tree"
-
+  fail_fast: true
   tasks:
 
     # ---------------------------------------------------------
@@ -105,7 +105,7 @@ dag:
         - "branch1_step2"
         - "branch2_step2"
         - "branch3_step2"
-      dependency_policy: none
+      dependency_policy: "none"
 
     # ---------------------------------------------------------
     # FINAL TASK
@@ -115,3 +115,5 @@ dag:
       params:
         message: "Triple-branch conditional pipeline completed successfully!"
       dependencies: ["merge_results"]
+      is_final: true
+

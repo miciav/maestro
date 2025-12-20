@@ -880,3 +880,58 @@ class StatusManager:
         if cls._instance is None:
             raise RuntimeError("StatusManager has not been initialized yet.")
         return cls._instance
+
+    def get_nearest_upstream_timestamp(
+        self,
+        dag_id: str,
+        execution_id: str,
+        task_id: str,
+        dag,
+    ) -> Optional[datetime]:
+        """
+        Return the most recent valid timestamp among the given task or its upstream
+        dependencies (recursively).
+
+        Used to determine an effective timestamp for exit-tasks that never started
+        (e.g. skipped tasks).
+        """
+
+        visited = set()
+
+        def _walk(tid: str) -> Optional[datetime]:
+            if tid in visited:
+                return None
+            visited.add(tid)
+
+            with self.Session() as session:
+                task = (
+                    session.query(TaskORM)
+                    .filter_by(
+                        dag_id=dag_id,
+                        id=tid,
+                        execution_id=execution_id,
+                    )
+                    .first()
+                )
+
+                # 1️⃣ Se il task ha un timestamp valido → usalo
+                if task:
+                    if task.started_at:
+                        return task.started_at
+                    if task.completed_at:
+                        return task.completed_at
+
+            # 2️⃣ Altrimenti risali ricorsivamente dagli upstream
+            dag_task = dag.tasks.get(tid)
+            if not dag_task:
+                return None
+
+            upstream_times = []
+            for dep_id in dag_task.dependencies:
+                ts = _walk(dep_id)
+                if ts:
+                    upstream_times.append(ts)
+
+            return max(upstream_times) if upstream_times else None
+
+        return _walk(task_id)

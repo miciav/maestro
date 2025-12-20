@@ -58,7 +58,20 @@ class DAGLoader:
         if "cron_schedule" in config.dag:
             cron_schedule = config.dag["cron_schedule"]
 
-        dag = DAG(dag_id=dag_id, start_time=start_time, cron_schedule=cron_schedule)
+        # Extract fail_fast execution policy (default: False)
+        fail_fast = False
+        if "fail_fast" in config.dag:
+            if not isinstance(config.dag["fail_fast"], bool):
+                raise ValueError("fail_fast must be a boolean (true/false)")
+            fail_fast = config.dag["fail_fast"]
+
+        dag = DAG(
+            dag_id=dag_id,
+            start_time=start_time,
+            cron_schedule=cron_schedule,
+            fail_fast=fail_fast,
+        )
+
         dag_config = config.dag
 
         # Validate required fields
