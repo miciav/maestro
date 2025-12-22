@@ -983,37 +983,61 @@ class StatusManager:
         execution_id: str,
     ) -> Optional[str]:
         """
-        Imposta executions.status copiando lo status della task is_final=True
-        con started_at più recente per la data execution.
+        Imposta executions.status secondo la policy:
+
+        - se fail_fast=True e ∃ task failed → FAILED
+        - altrimenti → usa exit-task (is_final)
         """
 
         with self.Session.begin() as session:
-
-            final_task = (
-                session.query(TaskORM)
-                .filter(
-                    TaskORM.dag_id == dag_id,
-                    TaskORM.execution_id == execution_id,
-                    TaskORM.is_final == "True",  # ⚠️ stringa, come da tuo DB
-                )
-                .order_by(TaskORM.started_at.desc())
-                .first()
-            )
-
-            if not final_task:
-                # Fuori scope: nessuna final task
-                return None
 
             execution = (
                 session.query(ExecutionORM)
                 .filter_by(dag_id=dag_id, id=execution_id)
                 .first()
             )
-
             if not execution:
+                return None
+
+            # 🔴 REGOLA PRIORITARIA — FAIL FAST
+            if self.is_fail_fast_enabled(dag_id):
+                failed_exists = (
+                    session.query(TaskORM)
+                    .filter(
+                        TaskORM.dag_id == dag_id,
+                        TaskORM.execution_id == execution_id,
+                        TaskORM.status == "failed",
+                    )
+                    .count()
+                    > 0
+                )
+
+                if failed_exists:
+                    execution.status = "failed"
+                    execution.completed_at = datetime.now()
+                    return "failed"
+
+            # 🟢 REGOLA STANDARD — EXIT TASK
+            final_task = (
+                session.query(TaskORM)
+                .filter(
+                    TaskORM.dag_id == dag_id,
+                    TaskORM.execution_id == execution_id,
+                    TaskORM.is_final == "True",
+                )
+                .order_by(TaskORM.started_at.desc())
+                .first()
+            )
+
+            if not final_task:
                 return None
 
             execution.status = final_task.status
             execution.completed_at = datetime.now()
-
             return final_task.status
+
+    def is_fail_fast_enabled(self, dag_id: str) -> bool:
+        definition = self.get_dag_definition(dag_id)
+        if not definition:
+            return False
+        return bool(definition.get("fail_fast", False))
