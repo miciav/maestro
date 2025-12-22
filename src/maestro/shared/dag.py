@@ -256,12 +256,25 @@ class DAG:
         if not exit_tasks:
             return DAGStatus.FAILED  # DAG senza uscita = errore logico
 
+        # 🔍 DEBUG — fondamentale per verificare Test 4
+        self.logger.warning(
+            f"[FINAL STATUS DEBUG] "
+            f"exit_tasks={exit_tasks} "
+            f"statuses={[status_manager.get_task_status(self.dag_id, t, execution_id) for t in exit_tasks]}"
+        )
+
+        # 🔥 FAIL-FAST HA PRIORITÀ ASSOLUTA
+        if self.fail_fast:
+            if status_manager.has_any_failed_task(self.dag_id, execution_id):
+                return DAGStatus.FAILED
+
+        # 🔹 LOGICA STANDARD (fail_fast = false)
         statuses = [
             status_manager.get_task_status(self.dag_id, tid, execution_id)
             for tid in exit_tasks
         ]
 
-        # Caso 2 — fallisce SOLO se TUTTE falliscono
+        # Fallisce SOLO se TUTTE le exit-task falliscono
         if all(status == "failed" for status in statuses):
             return DAGStatus.FAILED
 

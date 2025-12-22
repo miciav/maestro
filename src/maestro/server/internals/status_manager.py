@@ -4,7 +4,7 @@ import re
 import string
 import threading
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 """Internal status manager used by the server.
 
@@ -151,7 +151,12 @@ class StatusManager:
     # ----------------------------------------------------------------------
     # Metodo: set_task_status
     def set_task_status(
-        self, dag_id: str, task_id: str, status: str, execution_id: str = None
+        self,
+        dag_id: str,
+        task_id: str,
+        status: str,
+        execution_id: str = None,
+        is_final: bool = False,
     ):
         """Create or update a task record and set its status.
 
@@ -166,11 +171,18 @@ class StatusManager:
                 .filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id)
                 .first()
             )
+
             if not task:
-                task = TaskORM(dag_id=dag_id, id=task_id, execution_id=execution_id)
+                task = TaskORM(
+                    dag_id=dag_id,
+                    id=task_id,
+                    execution_id=execution_id,
+                    is_final="True" if is_final else "False",
+                )
                 session.add(task)
 
             task.status = status
+            task.is_final = "True" if is_final else "False"
             task.thread_id = str(threading.current_thread().ident)
 
             if status == "running":
@@ -363,24 +375,49 @@ class StatusManager:
 
     # ----------------------------------------------------------------------
     # Method: initialize_tasks_for_execution
-    def initialize_tasks_for_execution(
-        self, dag_id: str, execution_id: str, task_ids: List[str]
-    ):
-        """Insert initial TaskORM rows for a new execution.
 
-        Each task is created with status `pending` and an `insertion_order`
-        so callers can rely on a deterministic ordering when needed.
+    def initialize_tasks_for_execution(
+        self,
+        dag_id: str,
+        execution_id: str,
+        tasks_or_task_ids: Union[Dict[str, Any], List[str]],
+    ):
+        """Insert initial TaskORM rows for a new execution, including is_final when available.
+
+        Backward compatible:
+        - if tasks_or_task_ids is a dict: expects {task_id: task_obj} and persists task_obj.is_final
+        - if tasks_or_task_ids is a list: expects [task_id, ...] and persists is_final as False
         """
+
         with self.Session.begin() as session:
-            for i, task_id in enumerate(task_ids):
-                task = TaskORM(
+
+            # NEW PATH: dict {task_id: task_obj}
+            if hasattr(tasks_or_task_ids, "items"):
+                for i, (task_id, task_obj) in enumerate(tasks_or_task_ids.items()):
+                    task_orm = TaskORM(
+                        id=task_id,
+                        dag_id=dag_id,
+                        execution_id=execution_id,
+                        status="pending",
+                        insertion_order=i,
+                        is_final=(
+                            "True" if getattr(task_obj, "is_final", False) else "False"
+                        ),
+                    )
+                    session.add(task_orm)
+                return
+
+            # OLD PATH: list [task_id, ...]
+            for i, task_id in enumerate(tasks_or_task_ids):
+                task_orm = TaskORM(
                     id=task_id,
                     dag_id=dag_id,
                     execution_id=execution_id,
                     status="pending",
                     insertion_order=i,
+                    is_final="False",
                 )
-                session.add(task)
+                session.add(task_orm)
 
     # ----------------------------------------------------------------------
     # Method: update_dag_execution_status
@@ -935,3 +972,48 @@ class StatusManager:
             return max(upstream_times) if upstream_times else None
 
         return _walk(task_id)
+
+    def has_any_failed_task(self, dag_id: str, execution_id: str) -> bool:
+        tasks = self.get_tasks_for_execution(dag_id, execution_id)
+        return any(t["status"] == "failed" for t in tasks)
+
+    def update_execution_status_from_final_task(
+        self,
+        dag_id: str,
+        execution_id: str,
+    ) -> Optional[str]:
+        """
+        Imposta executions.status copiando lo status della task is_final=True
+        con started_at più recente per la data execution.
+        """
+
+        with self.Session.begin() as session:
+
+            final_task = (
+                session.query(TaskORM)
+                .filter(
+                    TaskORM.dag_id == dag_id,
+                    TaskORM.execution_id == execution_id,
+                    TaskORM.is_final == "True",  # ⚠️ stringa, come da tuo DB
+                )
+                .order_by(TaskORM.started_at.desc())
+                .first()
+            )
+
+            if not final_task:
+                # Fuori scope: nessuna final task
+                return None
+
+            execution = (
+                session.query(ExecutionORM)
+                .filter_by(dag_id=dag_id, id=execution_id)
+                .first()
+            )
+
+            if not execution:
+                return None
+
+            execution.status = final_task.status
+            execution.completed_at = datetime.now()
+
+            return final_task.status

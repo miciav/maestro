@@ -87,6 +87,9 @@ class DAGLoader:
                     f"Error creating task '{task_config.get('task_id', 'unknown')}': {e}"
                 )
 
+        # 🔒 Resolve is_final deterministically now that tasks are loaded
+        self._resolve_final_tasks(dag)
+
         try:
             dag.validate()
         except Exception as e:
@@ -211,5 +214,38 @@ class DAGLoader:
                 task = self._create_task_from_config(task_config, None)
                 dag.add_task(task)
 
+        # 🔒 Resolve is_final deterministically now that tasks are loaded
+        self._resolve_final_tasks(dag)
+
         dag.validate()
         return dag
+
+    def _resolve_final_tasks(self, dag):
+        """
+        Ensure that at least one task is marked as is_final=True.
+
+        If no task explicitly declares is_final=True,
+        automatically mark all sink tasks (tasks that are not
+        dependencies of any other task) as final.
+        """
+
+        tasks = dag.tasks
+
+        # 1) Check for explicit is_final=True
+        any_explicit_final = any(
+            bool(getattr(task, "is_final", False)) for task in tasks.values()
+        )
+
+        if any_explicit_final:
+            return  # nothing to do
+
+        # 2) Collect all dependency names
+        all_dependencies = set()
+        for task in tasks.values():
+            for dep in getattr(task, "dependencies", []) or []:
+                all_dependencies.add(dep)
+
+        # 3) Mark sink tasks as final
+        for task_id, task in tasks.items():
+            if task_id not in all_dependencies:
+                task.is_final = True

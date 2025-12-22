@@ -135,7 +135,7 @@ class Orchestrator:
         # Logger dell’orchestratore (non propaga al root)
         self.logger = logging.getLogger("maestro.orchestrator")
         self.logger.setLevel(level)
-        self.logger.propagate = False
+        self.logger.propagate = True
 
         # DB handler creato ma NON agganciato al root
         self.db_handler = DatabaseLogHandler(self.status_manager)
@@ -239,9 +239,39 @@ class Orchestrator:
                 )
                 # Initialize all tasks with pending status only if not resuming
                 if not resume:
-                    task_ids = list(dag.tasks.keys())
+
+                    # Check if any task explicitly declares is_final = True
+
+                    # 1) Check if any task explicitly declares is_final = True (robust)
+                    any_explicit_final = any(
+                        self._coerce_bool(getattr(t, "is_final", False))
+                        for t in dag.tasks.values()
+                    )
+
+                    # 2) If none explicit, compute final tasks structurally (sink nodes)
+                    if not any_explicit_final:
+                        all_dependencies = set()
+                        for t in dag.tasks.values():
+                            for dep in getattr(t, "dependencies", []) or []:
+                                all_dependencies.add(dep)
+
+                        for tid, t in dag.tasks.items():
+                            if tid not in all_dependencies:
+                                t.is_final = True
+
+                    self.logger.warning(
+                        "[FINAL DETECT] "
+                        + ", ".join(
+                            f"{tid}={self._coerce_bool(getattr(t, 'is_final', False))}"
+                            for tid, t in dag.tasks.items()
+                        )
+                    )
+
+                    # Pass the full task mapping so is_final is persisted PRE-DB
                     sm.initialize_tasks_for_execution(
-                        dag.dag_id, execution_id, task_ids
+                        dag.dag_id,
+                        execution_id,
+                        dag.tasks,
                     )
 
         # the body of the thread
@@ -278,22 +308,10 @@ class Orchestrator:
                 )
 
                 with self.status_manager as sm:
-                    final_status = dag.evaluate_final_status(
-                        status_manager=sm,
-                        execution_id=execution_id,
-                    )
 
-                    self.logger.warning(
-                        f"[DAG FINAL] execution_id={execution_id} "
-                        f"final_status={final_status} "
-                        f"tasks_status={sm.get_dag_status(dag.dag_id, execution_id)}"
-                    )
-
-                    dag.status = final_status
-                    sm.update_dag_execution_status(
+                    sm.update_execution_status_from_final_task(
                         dag.dag_id,
                         execution_id,
-                        final_status.value,
                     )
 
             except Exception as e:
@@ -516,7 +534,17 @@ class Orchestrator:
 
                     if stop_scheduling and dag.fail_fast:
                         task.status = TaskStatus.SKIPPED
-                        sm.set_task_status(dag_id, task_id, "skipped", execution_id)
+
+                        sm.set_task_status(
+                            dag_id,
+                            task_id,
+                            "skipped",
+                            execution_id,
+                            is_final=self._coerce_bool(
+                                getattr(task, "is_final", False)
+                            ),
+                        )
+
                         skipped_tasks.add(task_id)
                         pending_tasks.remove(task_id)
 
@@ -558,7 +586,17 @@ class Orchestrator:
 
                     elif action == "skip":
                         task.status = TaskStatus.SKIPPED
-                        sm.set_task_status(dag_id, task_id, "skipped", execution_id)
+
+                        sm.set_task_status(
+                            dag_id,
+                            task_id,
+                            "skipped",
+                            execution_id,
+                            is_final=self._coerce_bool(
+                                getattr(task, "is_final", False)
+                            ),
+                        )
+
                         skipped_tasks.add(task_id)
                         pending_tasks.remove(task_id)
 
@@ -615,7 +653,15 @@ class Orchestrator:
                     # Condition False → SKIPPED qui
                     task.status = TaskStatus.SKIPPED
                     skipped_tasks.add(task_id)
-                    sm.set_task_status(dag_id, task_id, "skipped", execution_id)
+
+                    sm.set_task_status(
+                        dag_id,
+                        task_id,
+                        "skipped",
+                        execution_id,
+                        is_final=self._coerce_bool(getattr(task, "is_final", False)),
+                    )
+
                     to_skip.append(task_id)
                     self.logger.info(
                         f"Skipping task {task_id} due to condition: {condition}"
@@ -717,8 +763,15 @@ class Orchestrator:
             try:
                 # Stato: running
                 task.status = TaskStatus.RUNNING
+
                 with self.status_manager as sm:
-                    sm.set_task_status(dag_id, task_id, "running", execution_id)
+                    sm.set_task_status(
+                        dag_id,
+                        task_id,
+                        "running",
+                        execution_id,
+                        is_final=self._coerce_bool(getattr(task, "is_final", False)),
+                    )
 
                 if status_callback:
                     status_callback()
@@ -741,8 +794,15 @@ class Orchestrator:
 
                 # Se arrivo qui: successo
                 task.status = TaskStatus.COMPLETED
+
                 with self.status_manager as sm:
-                    sm.set_task_status(dag_id, task_id, "completed", execution_id)
+                    sm.set_task_status(
+                        dag_id,
+                        task_id,
+                        "completed",
+                        execution_id,
+                        is_final=self._coerce_bool(getattr(task, "is_final", False)),
+                    )
 
                 if progress_tracker:
                     progress_tracker.increment_completed()
@@ -759,8 +819,15 @@ class Orchestrator:
                 self.logger.error(f"Task {task_id} failed on attempt {attempt}: {e}")
 
                 task.status = TaskStatus.FAILED
+
                 with self.status_manager as sm:
-                    sm.set_task_status(dag_id, task_id, "failed", execution_id)
+                    sm.set_task_status(
+                        dag_id,
+                        task_id,
+                        "failed",
+                        execution_id,
+                        is_final=self._coerce_bool(getattr(task, "is_final", False)),
+                    )
 
                 if attempt <= max_retries:
                     self.logger.info(
@@ -800,7 +867,14 @@ class Orchestrator:
         for task_id in pending_tasks:
             task = dag.tasks[task_id]
             task.status = TaskStatus.SKIPPED
-            sm.set_task_status(dag.dag_id, task_id, "skipped", execution_id)
+
+            sm.set_task_status(
+                dag.dag_id,
+                task_id,
+                "skipped",
+                execution_id,
+                is_final=self._coerce_bool(getattr(task, "is_final", False)),
+            )
 
         if status_callback:
             status_callback()
@@ -845,6 +919,22 @@ class Orchestrator:
             TaskStatus.SKIPPED: "magenta",
         }
         return color_map.get(status, "white")
+
+    def _coerce_bool(self, v: Any) -> bool:
+        """Coerce common YAML/JSON representations to bool safely."""
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return False
+        if isinstance(v, (int, float)):
+            return v != 0
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ("true", "yes", "y", "1", "on"):
+                return True
+            if s in ("false", "no", "n", "0", "off", ""):
+                return False
+        return bool(v)
 
     def get_dag_status(self, dag: DAG) -> Dict[str, Any]:
         """Get comprehensive DAG status."""

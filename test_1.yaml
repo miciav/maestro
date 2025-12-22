@@ -1,6 +1,6 @@
 dag:
   name: "test_fail_fast_off"
-  fail_fast: true
+  fail_fast: false
   tasks:
     - task_id: start
       type: PrintTask
@@ -19,4 +19,3 @@ dag:
         message: "Final message"
       dependencies: ["failer"]
       dependency_policy: "none"
-      is_final: true
