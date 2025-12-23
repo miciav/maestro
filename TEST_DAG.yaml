@@ -23,6 +23,6 @@ dag:
     - task_id: final
       type: BashTask
       params:
-        command: "exit 1"
+        command: "echo"
       dependencies: ["failer1"]
-      # dependency_policy: "none"
+      dependency_policy: "none"

@@ -931,6 +931,26 @@ class StatusManager:
         execution_id: str,
     ) -> Optional[str]:
 
+        # 1️⃣ risolvi final task + exit-task
+        self.resolve_final_tasks(dag_id, execution_id)
+        exit_task = self.find_exit_task(dag_id, execution_id)
+
+        if not exit_task:
+            return None
+
+        # 2️⃣ mappa status task → status execution
+        if exit_task.status == "completed":
+            new_status = "completed"
+        elif exit_task.status == "failed":
+            new_status = "failed"
+        elif exit_task.status == "skipped":
+            # caso all-skipped
+            new_status = "failed"
+        else:
+            # fallback ultra-difensivo (non dovrebbe mai succedere)
+            new_status = "failed"
+
+        # 3️⃣ persistenza
         with self.Session.begin() as session:
             execution = (
                 session.query(ExecutionORM)
@@ -940,39 +960,9 @@ class StatusManager:
             if not execution:
                 return None
 
-            # 🔴 FAIL FAST
-            if self.is_fail_fast_enabled(dag_id):
-                failed_exists = (
-                    session.query(TaskORM)
-                    .filter(
-                        TaskORM.dag_id == dag_id,
-                        TaskORM.execution_id == execution_id,
-                        TaskORM.status == "failed",
-                    )
-                    .count()
-                    > 0
-                )
-                if failed_exists:
-                    execution.status = "failed"
-                    execution.completed_at = datetime.now()
-                    return "failed"
-
-        # 🟢 LOGICA STANDARD (fuori dal fail_fast)
-        self.resolve_final_tasks(dag_id, execution_id)
-        exit_task = self.find_exit_task(dag_id, execution_id)
-
-        if not exit_task:
-            return None
-
-        with self.Session.begin() as session:
-            execution = (
-                session.query(ExecutionORM)
-                .filter_by(dag_id=dag_id, id=execution_id)
-                .first()
-            )
-            execution.status = exit_task.status
+            execution.status = new_status
             execution.completed_at = datetime.now()
-            return exit_task.status
+            return new_status
 
     def is_fail_fast_enabled(self, dag_id: str) -> bool:
         definition = self.get_dag_definition(dag_id)
