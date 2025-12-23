@@ -1,19 +1,12 @@
 dag:
   name: "test_fail_fast_off"
-  fail_fast: true
+  fail_fast: false
   tasks:
+
     - task_id: start
       type: PrintTask
       params:
         message: "Start"
-
-
-    - task_id: failer1
-      type: BashTask
-      params:
-        command: "exit 1"
-      dependencies: ["start"]
-
 
     - task_id: success1
       type: BashTask
@@ -21,11 +14,15 @@ dag:
         command: "echo 'DAG completed.'"
       dependencies: ["start"]
 
+    - task_id: failer1
+      type: BashTask
+      params:
+        command: "exit 1"
+      dependencies: ["start"]
 
     - task_id: final
-      type: PrintTask
+      type: BashTask
       params:
-        message: "Final message"
+        command: "exit 1"
       dependencies: ["failer1"]
-      dependency_policy: "none"
-
+      # dependency_policy: "none"

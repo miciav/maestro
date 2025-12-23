@@ -156,7 +156,7 @@ class StatusManager:
         task_id: str,
         status: str,
         execution_id: str = None,
-        is_final: bool = False,
+        is_final: Optional[bool] = None,
     ):
         """Create or update a task record and set its status.
 
@@ -189,6 +189,9 @@ class StatusManager:
                 task.started_at = datetime.now()
             elif status in ["completed", "failed", "cancelled", "skipped"]:
                 task.completed_at = datetime.now()
+
+            if is_final is not None:
+                task.is_final = "True" if is_final else "False"
 
     # ----------------------------------------------------------------------
     # Metodo: set_task_output
@@ -918,61 +921,6 @@ class StatusManager:
             raise RuntimeError("StatusManager has not been initialized yet.")
         return cls._instance
 
-    def get_nearest_upstream_timestamp(
-        self,
-        dag_id: str,
-        execution_id: str,
-        task_id: str,
-        dag,
-    ) -> Optional[datetime]:
-        """
-        Return the most recent valid timestamp among the given task or its upstream
-        dependencies (recursively).
-
-        Used to determine an effective timestamp for exit-tasks that never started
-        (e.g. skipped tasks).
-        """
-
-        visited = set()
-
-        def _walk(tid: str) -> Optional[datetime]:
-            if tid in visited:
-                return None
-            visited.add(tid)
-
-            with self.Session() as session:
-                task = (
-                    session.query(TaskORM)
-                    .filter_by(
-                        dag_id=dag_id,
-                        id=tid,
-                        execution_id=execution_id,
-                    )
-                    .first()
-                )
-
-                # 1️⃣ Se il task ha un timestamp valido → usalo
-                if task:
-                    if task.started_at:
-                        return task.started_at
-                    if task.completed_at:
-                        return task.completed_at
-
-            # 2️⃣ Altrimenti risali ricorsivamente dagli upstream
-            dag_task = dag.tasks.get(tid)
-            if not dag_task:
-                return None
-
-            upstream_times = []
-            for dep_id in dag_task.dependencies:
-                ts = _walk(dep_id)
-                if ts:
-                    upstream_times.append(ts)
-
-            return max(upstream_times) if upstream_times else None
-
-        return _walk(task_id)
-
     def has_any_failed_task(self, dag_id: str, execution_id: str) -> bool:
         tasks = self.get_tasks_for_execution(dag_id, execution_id)
         return any(t["status"] == "failed" for t in tasks)
@@ -982,15 +930,8 @@ class StatusManager:
         dag_id: str,
         execution_id: str,
     ) -> Optional[str]:
-        """
-        Imposta executions.status secondo la policy:
-
-        - se fail_fast=True e ∃ task failed → FAILED
-        - altrimenti → usa exit-task (is_final)
-        """
 
         with self.Session.begin() as session:
-
             execution = (
                 session.query(ExecutionORM)
                 .filter_by(dag_id=dag_id, id=execution_id)
@@ -999,7 +940,7 @@ class StatusManager:
             if not execution:
                 return None
 
-            # 🔴 REGOLA PRIORITARIA — FAIL FAST
+            # 🔴 FAIL FAST
             if self.is_fail_fast_enabled(dag_id):
                 failed_exists = (
                     session.query(TaskORM)
@@ -1011,33 +952,163 @@ class StatusManager:
                     .count()
                     > 0
                 )
-
                 if failed_exists:
                     execution.status = "failed"
                     execution.completed_at = datetime.now()
                     return "failed"
 
-            # 🟢 REGOLA STANDARD — EXIT TASK
-            final_task = (
-                session.query(TaskORM)
-                .filter(
-                    TaskORM.dag_id == dag_id,
-                    TaskORM.execution_id == execution_id,
-                    TaskORM.is_final == "True",
-                )
-                .order_by(TaskORM.started_at.desc())
+        # 🟢 LOGICA STANDARD (fuori dal fail_fast)
+        self.resolve_final_tasks(dag_id, execution_id)
+        exit_task = self.find_exit_task(dag_id, execution_id)
+
+        if not exit_task:
+            return None
+
+        with self.Session.begin() as session:
+            execution = (
+                session.query(ExecutionORM)
+                .filter_by(dag_id=dag_id, id=execution_id)
                 .first()
             )
-
-            if not final_task:
-                return None
-
-            execution.status = final_task.status
+            execution.status = exit_task.status
             execution.completed_at = datetime.now()
-            return final_task.status
+            return exit_task.status
 
     def is_fail_fast_enabled(self, dag_id: str) -> bool:
         definition = self.get_dag_definition(dag_id)
         if not definition:
             return False
         return bool(definition.get("fail_fast", False))
+
+    def resolve_final_tasks(self, dag_id: str, execution_id: str) -> None:
+        """
+        Determina e normalizza tasks.is_final secondo le regole definitive.
+        """
+
+        with self.Session.begin() as session:
+            tasks = (
+                session.query(TaskORM)
+                .filter_by(dag_id=dag_id, execution_id=execution_id)
+                .all()
+            )
+
+            if not tasks:
+                return
+
+            task_by_id = {t.id: t for t in tasks}
+
+            dag_def = self.get_dag_definition(dag_id)
+            dag_tasks = dag_def.get("tasks", {}) if dag_def else {}
+
+            # -------------------------------------------------
+            # 1️⃣ Individua finali STRUTTURALI
+            # -------------------------------------------------
+
+            # a) finali esplicite nel DAG
+            explicit_final_ids = {
+                tid for tid, t in dag_tasks.items() if bool(t.get("is_final", False))
+            }
+
+            if explicit_final_ids:
+                structural_final_ids = explicit_final_ids
+            else:
+                # b) sink nodes (non dipendenze di nessuno)
+                all_deps = set()
+                for t in dag_tasks.values():
+                    for dep in t.get("dependencies", []) or []:
+                        all_deps.add(dep)
+
+                structural_final_ids = {
+                    tid for tid in dag_tasks.keys() if tid not in all_deps
+                }
+
+            structural_finals = [
+                task_by_id[tid] for tid in structural_final_ids if tid in task_by_id
+            ]
+
+            # -------------------------------------------------
+            # Helper: risalita dipendenze
+            # -------------------------------------------------
+            def find_upstream_with_started_at(task, visited=None):
+                if visited is None:
+                    visited = set()
+                if task.id in visited:
+                    return None
+                visited.add(task.id)
+
+                deps = dag_tasks.get(task.id, {}).get("dependencies", [])
+
+                candidates = []
+                for dep_id in deps:
+                    upstream = task_by_id.get(dep_id)
+                    if not upstream:
+                        continue
+                    if upstream.started_at:
+                        candidates.append(upstream)
+                    else:
+                        c = find_upstream_with_started_at(upstream, visited)
+                        if c:
+                            candidates.append(c)
+
+                return (
+                    max(candidates, key=lambda t: t.started_at) if candidates else None
+                )
+
+            # -------------------------------------------------
+            # 2️⃣ Normalizzazione DB
+            # -------------------------------------------------
+            for t in tasks:
+                t.is_final = "False"
+
+            # -------------------------------------------------
+            # 3️⃣ Validazione temporale
+            # -------------------------------------------------
+            final_candidates = []
+
+            for task in structural_finals:
+                if task.started_at:
+                    final_candidates.append(task)
+                else:
+                    upstream = find_upstream_with_started_at(task)
+                    if upstream:
+                        final_candidates.append(upstream)
+
+            # -------------------------------------------------
+            # 4️⃣ Fallback estremo
+            # -------------------------------------------------
+            if not final_candidates:
+                fallback = max(tasks, key=lambda t: t.insertion_order)
+                fallback.is_final = "True"
+                return
+
+            # -------------------------------------------------
+            # 5️⃣ Scrittura finale
+            # -------------------------------------------------
+            for t in final_candidates:
+                t.is_final = "True"
+
+    def find_exit_task(self, dag_id: str, execution_id: str) -> Optional[TaskORM]:
+        """
+        Ritorna la exit-task per l'execution.
+        Assume che resolve_final_tasks() sia già stata chiamata.
+        """
+
+        with self.Session() as session:
+            final_tasks = (
+                session.query(TaskORM)
+                .filter(
+                    TaskORM.dag_id == dag_id,
+                    TaskORM.execution_id == execution_id,
+                    TaskORM.is_final == "True",
+                )
+                .all()
+            )
+
+            if not final_tasks:
+                return None
+
+            with_started = [t for t in final_tasks if t.started_at]
+            if with_started:
+                return max(with_started, key=lambda t: t.started_at)
+
+            return max(final_tasks, key=lambda t: t.insertion_order)

@@ -240,33 +240,6 @@ class Orchestrator:
                 # Initialize all tasks with pending status only if not resuming
                 if not resume:
 
-                    # Check if any task explicitly declares is_final = True
-
-                    # 1) Check if any task explicitly declares is_final = True (robust)
-                    any_explicit_final = any(
-                        self._coerce_bool(getattr(t, "is_final", False))
-                        for t in dag.tasks.values()
-                    )
-
-                    # 2) If none explicit, compute final tasks structurally (sink nodes)
-                    if not any_explicit_final:
-                        all_dependencies = set()
-                        for t in dag.tasks.values():
-                            for dep in getattr(t, "dependencies", []) or []:
-                                all_dependencies.add(dep)
-
-                        for tid, t in dag.tasks.items():
-                            if tid not in all_dependencies:
-                                t.is_final = True
-
-                    self.logger.warning(
-                        "[FINAL DETECT] "
-                        + ", ".join(
-                            f"{tid}={self._coerce_bool(getattr(t, 'is_final', False))}"
-                            for tid, t in dag.tasks.items()
-                        )
-                    )
-
                     # Pass the full task mapping so is_final is persisted PRE-DB
                     sm.initialize_tasks_for_execution(
                         dag.dag_id,
@@ -535,15 +508,7 @@ class Orchestrator:
                     if stop_scheduling and dag.fail_fast:
                         task.status = TaskStatus.SKIPPED
 
-                        sm.set_task_status(
-                            dag_id,
-                            task_id,
-                            "skipped",
-                            execution_id,
-                            is_final=self._coerce_bool(
-                                getattr(task, "is_final", False)
-                            ),
-                        )
+                        sm.set_task_status(dag_id, task_id, "skipped", execution_id)
 
                         skipped_tasks.add(task_id)
                         pending_tasks.remove(task_id)
@@ -587,15 +552,7 @@ class Orchestrator:
                     elif action == "skip":
                         task.status = TaskStatus.SKIPPED
 
-                        sm.set_task_status(
-                            dag_id,
-                            task_id,
-                            "skipped",
-                            execution_id,
-                            is_final=self._coerce_bool(
-                                getattr(task, "is_final", False)
-                            ),
-                        )
+                        sm.set_task_status(dag_id, task_id, "skipped", execution_id)
 
                         skipped_tasks.add(task_id)
                         pending_tasks.remove(task_id)
@@ -659,7 +616,6 @@ class Orchestrator:
                         task_id,
                         "skipped",
                         execution_id,
-                        is_final=self._coerce_bool(getattr(task, "is_final", False)),
                     )
 
                     to_skip.append(task_id)
@@ -770,7 +726,6 @@ class Orchestrator:
                         task_id,
                         "running",
                         execution_id,
-                        is_final=self._coerce_bool(getattr(task, "is_final", False)),
                     )
 
                 if status_callback:
@@ -801,7 +756,6 @@ class Orchestrator:
                         task_id,
                         "completed",
                         execution_id,
-                        is_final=self._coerce_bool(getattr(task, "is_final", False)),
                     )
 
                 if progress_tracker:
@@ -826,7 +780,6 @@ class Orchestrator:
                         task_id,
                         "failed",
                         execution_id,
-                        is_final=self._coerce_bool(getattr(task, "is_final", False)),
                     )
 
                 if attempt <= max_retries:
@@ -873,7 +826,6 @@ class Orchestrator:
                 task_id,
                 "skipped",
                 execution_id,
-                is_final=self._coerce_bool(getattr(task, "is_final", False)),
             )
 
         if status_callback:
