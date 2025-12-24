@@ -227,11 +227,7 @@ async def attach_dag_logs(
 
                     # 🔥 TERMINAZIONE AUTOMATICA STREAM
                     exec_info = sm.get_latest_execution(dag_id)
-                    if exec_info and exec_info["status"] in (
-                        "completed",
-                        "failed",
-                        "cancelled",
-                    ):
+                    if exec_info and exec_info["status"] in ("completed", "failed"):
                         yield 'data: {"event": "DAG_COMPLETED"}\n\n'
                         return
 

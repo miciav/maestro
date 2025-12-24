@@ -225,27 +225,33 @@ class Orchestrator:
         self._execution_stop_events[execution_id] = stop_event
 
         # Create or update execution record in database synchronously
-        with self.status_manager as sm:
-            # Check if execution already exists (e.g., with 'created' status)
-            existing = sm.get_latest_execution(dag.dag_id)
-            if existing and existing["execution_id"] == execution_id:
-                # Update existing execution to 'running'
-                sm.update_dag_execution_status(dag.dag_id, execution_id, "running")
-                # Tasks should already exist for this execution, don't reinitialize
-            else:
-                # Create new execution
-                sm.create_dag_execution(
-                    dag.dag_id, execution_id, dag_filepath=dag_filepath
-                )
-                # Initialize all tasks with pending status only if not resuming
-                if not resume:
 
-                    # Pass the full task mapping so is_final is persisted PRE-DB
+        with self.status_manager as sm:
+
+            # 1️⃣ crea execution SE non esiste
+            existing = sm.get_latest_execution(dag.dag_id)
+
+            if not existing or existing["execution_id"] != execution_id:
+                sm.create_dag_execution(
+                    dag.dag_id,
+                    execution_id,
+                    dag_filepath=dag_filepath,
+                    fail_fast=dag.fail_fast,
+                )
+
+                if not resume:
                     sm.initialize_tasks_for_execution(
                         dag.dag_id,
                         execution_id,
                         dag.tasks,
                     )
+
+            # 2️⃣ TRANSIZIONE OBBLIGATORIA A RUNNING
+            sm.update_dag_execution_status(
+                dag.dag_id,
+                execution_id,
+                "running",
+            )
 
         # the body of the thread
         def execute():
@@ -814,7 +820,7 @@ class Orchestrator:
         self._cancel_running_tasks(running_tasks)
 
         # Mark DAG as cancelled
-        sm.update_dag_execution_status(dag.dag_id, execution_id, "cancelled")
+        sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
 
         # Mark pending tasks as skipped
         for task_id in pending_tasks:
@@ -976,107 +982,88 @@ def evaluate_dependencies(
         "wait" -> task deve attendere
         "skip" -> task deve essere skippata
     """
-    policy = getattr(task, "dependency_policy", "none")
-    dependencies = getattr(task, "dependencies", [])
-    condition = getattr(task, "condition", None)
+
+    policy = getattr(task, "dependency_policy", "any")
+    if hasattr(policy, "value"):
+        policy = policy.value
+    policy = str(policy).lower()
+    dependencies = getattr(task, "dependencies", []) or []
+
+    # ⚠️ NORMALIZZAZIONE CRITICA DELLA CONDITION
+    raw_condition = getattr(task, "condition", None)
+    condition = raw_condition if raw_condition not in ("", False) else None
 
     # ---------------------------------------------------------
-    # 1) Nessuna dipendenza e nessuna condition → RUN
+    # 1) Nessuna dipendenza → valuta solo la condition
     # ---------------------------------------------------------
-    if not dependencies and not condition:
-        return "run"
+    if not dependencies:
+        if condition is None:
+            return "run"
+
+        try:
+            cond_value = eval(
+                condition,
+                {},
+                {
+                    "output_of": lambda tid: sm.get_task_output(
+                        dag_id, tid, execution_id
+                    )
+                },
+            )
+            return "run" if cond_value else "skip"
+        except Exception:
+            # condition non valutabile → NON bloccare la DAG
+            return "run"
 
     # ---------------------------------------------------------
     # 2) Gestione dipendenze (regole UNIVERSALI)
     # ---------------------------------------------------------
-    if dependencies:
-        statuses = [upstream_statuses.get(dep) for dep in dependencies]
+    statuses = [upstream_statuses.get(dep) for dep in dependencies]
 
-        # Stato non ancora noto
-        if any(s is None for s in statuses):
-            return "wait"
+    # Stato non ancora noto
+    if any(s is None for s in statuses):
+        return "wait"
 
-        # Dipendenze non ancora terminali
-        if any(s in ("pending", "running") for s in statuses):
-            return "wait"
+    # Dipendenze non ancora terminali
+    if any(s in ("pending", "running") for s in statuses):
+        return "wait"
 
-        # ---- policy ALL ----
-        if policy == "all":
-            if not all(s == "completed" for s in statuses):
-                return "skip"
+    # ---- policy ALL ----
+    if policy == "all":
+        if not all(s == "completed" for s in statuses):
+            return "skip"
 
-        # ---- policy ANY ----
-        elif policy == "any":
-            if not any(s == "completed" for s in statuses):
-                return "skip"
+    # ---- policy ANY ----
+    elif policy == "any":
+        if not any(s == "completed" for s in statuses):
+            return "skip"
 
-        # ---- policy NONE ----
-        elif policy == "none":
-            # tutte terminali → non importa lo stato
-            pass
+    # ---- policy NONE ----
+    elif policy == "none":
+        pass  # tutte terminali → ok
 
     # ---------------------------------------------------------
-    # 3) Gestione condition
+    # 3) Gestione condition (POST-dipendenze)
     # ---------------------------------------------------------
-
-    if condition:
+    if condition is not None:
 
         def output_of(tid):
-            # output "safe": se non c'è output (task failed o non scritto), torna None
             try:
                 return sm.get_task_output(dag_id, tid, execution_id)
             except Exception:
-                print(
-                    f"[eval_deps - def output_of(tid)] task={task.task_id} policy={policy} deps={dependencies} "
-                    f"upstream={upstream_statuses} condition={condition!r}"
-                )
                 return None
 
-        env = {"output_of": output_of}
-
         try:
-            cond_value = eval(condition, {}, env)
-
-            # False esplicito => skip (anche con policy none)
+            cond_value = eval(condition, {}, {"output_of": output_of})
             if not cond_value:
-                print(
-                    f"[eval_deps - try: cond_value] task={task.task_id} policy={policy} deps={dependencies} "
-                    f"upstream={upstream_statuses} condition={condition!r}"
-                )
                 return "skip"
-
-        except Exception as e:
-
-            print(
-                f"[evaluate_dependencies] Error evaluating condition for {task.task_id}: {e}"
-            )
-
-            # QUI la differenza chiave:
-            # - policy none: condition non valutabile -> NON blocca -> RUN
-            # - altre policy: comportamento conservativo -> SKIP
-            if policy == "none":
-
-                print(
-                    f"[eval_deps - if policy == 'none':] task={task.task_id} policy={policy} deps={dependencies} "
-                    f"upstream={upstream_statuses} condition={condition!r}"
-                )
-
-                return "run"
-
-            print(
-                f"[eval_deps - generale di except Exception as e] task={task.task_id} policy={policy} deps={dependencies} "
-                f"upstream={upstream_statuses} condition={condition!r}"
-            )
-
-            return "skip"
+        except Exception:
+            # condition non valutabile:
+            # - policy none → NON blocca
+            # - altre policy → skip
+            return "run" if policy == "none" else "skip"
 
     # ---------------------------------------------------------
     # 4) Tutto OK → RUN
     # ---------------------------------------------------------
-
-    print(
-        f"[eval_deps - before 'run'] task={task.task_id} policy={policy} deps={dependencies} "
-        f"upstream={upstream_statuses} condition={condition!r}"
-    )
-
     return "run"

@@ -147,8 +147,10 @@ async def create_dag(
 
         with orchestrator.status_manager as sm:
             sm.save_dag_definition(dag, request.dag_file_path)
-            # Create initial execution with 'created' status
-            sm.create_dag_execution_with_status(dag_id, execution_id, "created")
+            # Create initial execution with 'queued' status
+            sm.create_dag_execution_with_status(
+                dag_id, execution_id, "queued", fail_fast=dag.fail_fast
+            )
             # Initialize all tasks with pending status
             task_ids = list(dag.tasks.keys())
             sm.initialize_tasks_for_execution(dag_id, execution_id, task_ids)
@@ -185,7 +187,7 @@ async def run_dag(
             # Get the latest execution for this DAG
             latest_execution = sm.get_latest_execution(dag_id)
 
-            if latest_execution and latest_execution["status"] == "created":
+            if latest_execution and latest_execution["status"] == "queued":
                 # Use the existing execution ID from the created DAG
                 execution_id = latest_execution["execution_id"]
             else:
@@ -267,7 +269,7 @@ async def list_dags(
     """
     Lists all DAGs, with optional filtering.
     - `active` or `running`: shows running DAGs.
-    - `terminated`: shows completed, failed, and cancelled DAGs.
+    - `terminated`: shows completed and failed DAGs.
     - specific status: shows DAGs with that status
     - `all` or no filter: shows all DAGs.
     """
@@ -278,7 +280,6 @@ async def list_dags(
             elif status == "terminated":
                 dags = sm.get_dags_by_status("completed")
                 dags.extend(sm.get_dags_by_status("failed"))
-                dags.extend(sm.get_dags_by_status("cancelled"))
             elif status and status != "all":
                 dags = sm.get_dags_by_status(status)
             else:  # all or no filter
