@@ -178,8 +178,8 @@ async def run_dag(
 
     try:
         with orchestrator.status_manager as sm:
-            dag_definition = sm.get_dag_definition(dag_id)
-            if not dag_definition:
+            dag_filepath = sm.get_dag_filepath(dag_id)
+            if not dag_filepath:
                 raise HTTPException(
                     status_code=404, detail=f"DAG '{dag_id}' not found."
                 )
@@ -194,7 +194,7 @@ async def run_dag(
                 # Create a new execution ID for subsequent runs
                 execution_id = str(uuid.uuid4())
 
-        dag = orchestrator.dag_loader.load_dag_from_dict(dag_definition)
+        dag = orchestrator.load_dag_from_file(dag_filepath, dag_id=dag_id)
 
         # snapshot PRIMA dell’override (valore YAML / stored)
         yaml_or_stored_fail_fast = getattr(dag, "fail_fast", False)
@@ -370,13 +370,13 @@ async def resume_dag(
     """
     try:
         with orchestrator.status_manager as sm:
-            dag_definition = sm.get_dag_definition(dag_id)
-            if not dag_definition:
+            dag_filepath = sm.get_dag_filepath(dag_id)
+            if not dag_filepath:
                 raise HTTPException(
                     status_code=404, detail=f"DAG '{dag_id}' not found."
                 )
 
-        dag = orchestrator.dag_loader.load_dag_from_dict(dag_definition)
+        dag = orchestrator.load_dag_from_file(dag_filepath, dag_id=dag_id)
 
         # su resume puoi decidere una policy:
         # - o rispetti YAML

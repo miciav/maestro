@@ -70,3 +70,6 @@
 2025-12-24 18:40:18,595 [INFO] __main__: [DEBUG] Initializing Maestro server with database: /home/dave_crd/Sync/VSCode/maestro/maestro.db
 2025-12-24 18:46:25,251 [INFO] __main__: [DEBUG] Initializing Maestro server with database: /home/dave_crd/Sync/VSCode/maestro/maestro.db
 2025-12-24 19:01:05,483 [INFO] __main__: [DEBUG] Initializing Maestro server with database: /home/dave_crd/Sync/VSCode/maestro/maestro.db
+2025-12-24 19:20:27,391 [INFO] __main__: [DEBUG] Initializing Maestro server with database: /home/dave_crd/Sync/VSCode/maestro/maestro.db
+2025-12-24 19:21:35,978 [INFO] maestro.server.app: [DEBUG] Initializing Maestro server with database: /home/dave_crd/Sync/VSCode/maestro/maestro.db
+2025-12-24 19:34:03,969 [INFO] __main__: [DEBUG] Initializing Maestro server with database: /home/dave_crd/Sync/VSCode/maestro/maestro.db

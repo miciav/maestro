@@ -925,6 +925,12 @@ class StatusManager:
             except Exception:
                 return None
 
+    def get_dag_filepath(self, dag_id: str) -> Optional[str]:
+        """Return the stored DAG YAML path for a DAG id."""
+        with self.Session() as session:
+            dag = session.query(DagORM).filter_by(id=dag_id).first()
+            return dag.dag_filepath if dag else None
+
     # ----------------------------------------------------------------------
     # Method: delete_dag
     def delete_dag(self, dag_id: str) -> int:
@@ -1011,7 +1017,8 @@ class StatusManager:
         definition = self.get_dag_definition(dag_id)
         if not definition:
             return False
-        return bool(definition.get("fail_fast", False))
+        dag_def = definition.get("dag", definition)
+        return bool(dag_def.get("fail_fast", False))
 
     def resolve_final_tasks(self, dag_id: str, execution_id: str) -> None:
         """
@@ -1031,6 +1038,7 @@ class StatusManager:
             task_by_id = {t.task_id: t for t in tasks}
 
             dag_def = self.get_dag_definition(dag_id)
+            dag_def = dag_def.get("dag", dag_def) if dag_def else {}
             dag_tasks = dag_def.get("tasks", {}) if dag_def else {}
             if isinstance(dag_tasks, list):
                 dag_tasks = {
