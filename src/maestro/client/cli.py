@@ -155,7 +155,12 @@ def run(
 
     # 2. RUN DAG
     try:
-        run_info = api_client.run_dag(dag_id)
+        run_info = api_client.run_dag(
+            dag_id,
+            trigger_type="manual",
+            triggered_by="local_user",
+        )
+
     except Exception as e:
         console.print(f"[red]Error running DAG: {e}[/red]")
         raise typer.Exit(1)

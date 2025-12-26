@@ -27,11 +27,23 @@ class DAGLoader:
     def load_dag_from_file(self, filepath: str, dag_id: Optional[str] = None) -> DAG:
         """Load and validate DAG from YAML file."""
         filepath = str(Path(filepath).resolve())
-        dag_id = dag_id or Path(filepath).stem
+        dag_id = dag_id
 
         try:
+
             with open(filepath, "r") as f:
                 raw_config = yaml.safe_load(f)
+
+            config = DAGConfig(**raw_config)
+
+            # 🔥 FIX: DAG ID viene dal contenuto del file, non dal filename
+            yaml_dag = config.dag
+            yaml_dag_name = yaml_dag.get("name")
+
+            if not yaml_dag_name:
+                raise ValueError("DAG configuration must contain 'dag.name'")
+
+            dag_id = dag_id or yaml_dag_name
 
             # Validate config structure
             config = DAGConfig(**raw_config)

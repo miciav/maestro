@@ -692,13 +692,7 @@ class Orchestrator:
 
         task_id = task.task_id
 
-        print(
-            f"[DEBUG] task={task_id}, hasattr(retries)={hasattr(task, 'retries')}, "
-            f"raw_retries={getattr(task, 'retries', None)!r}, dict={task.__dict__}",
-            flush=True,
-        )
-
-        # Leggiamo i parametri di retry dal task, con fallback robusto
+        # --- Retry config ---
         raw_retries = getattr(task, "retries", 0)
         raw_retry_delay = getattr(task, "retry_delay", 0)
 
@@ -712,7 +706,6 @@ class Orchestrator:
         except (TypeError, ValueError):
             retry_delay = 0
 
-        # Log di debug per capire cosa vede l’orchestratore
         self.logger.info(
             f"Task {task_id}: configured retries={max_retries}, retry_delay={retry_delay}"
         )
@@ -721,31 +714,38 @@ class Orchestrator:
 
         while True:
             attempt += 1
+            attempt_id = None
+
+            # --- create attempt (best-effort) ---
+            try:
+                with self.status_manager as sm:
+                    attempt_id = sm.create_task_attempt(
+                        dag_id=dag_id,
+                        task_id=task_id,
+                        execution_id=execution_id,
+                        attempt_number=attempt,
+                    )
+            except Exception as ex:
+                self.logger.warning(
+                    f"[task_attempts] create_task_attempt failed for {task_id}: {ex}"
+                )
+                attempt_id = None
 
             try:
-                # Stato: running
+                # Stato task: running
                 task.status = TaskStatus.RUNNING
-
                 with self.status_manager as sm:
-                    sm.set_task_status(
-                        dag_id,
-                        task_id,
-                        "running",
-                        execution_id,
-                    )
+                    sm.set_task_status(dag_id, task_id, "running", execution_id)
 
                 if status_callback:
                     status_callback()
 
-                # Context per logging DB per questo thread/task
                 if db_handler:
                     db_handler.set_context(dag_id, execution_id, task_id)
 
-                # Passa info alla task (utile per PythonTask / BashTask)
                 task.dag_id = dag_id
                 task.execution_id = execution_id
 
-                # Log del tentativo
                 self.logger.info(
                     f"Executing task: {task_id} (attempt {attempt}/{max_retries + 1})"
                 )
@@ -753,26 +753,34 @@ class Orchestrator:
                 executor_instance = self.executor_factory.get_executor(task.executor)
                 task.execute(executor_instance)
 
-                # Se arrivo qui: successo
+                # --- SUCCESS ---
                 task.status = TaskStatus.COMPLETED
 
+                # ✅ SEMPRE aggiornare lo stato task (non dipende dagli attempt)
                 with self.status_manager as sm:
-                    sm.set_task_status(
-                        dag_id,
-                        task_id,
-                        "completed",
-                        execution_id,
-                    )
+                    sm.set_task_status(dag_id, task_id, "completed", execution_id)
+
+                # 🔍 aggiornare l'attempt è best-effort
+                if attempt_id:
+                    try:
+                        with self.status_manager as sm:
+                            sm.complete_task_attempt(
+                                attempt_id=attempt_id,
+                                status="completed",
+                            )
+                    except Exception as ex:
+                        self.logger.warning(
+                            f"[task_attempts] complete_task_attempt failed for {task_id}: {ex}"
+                        )
 
                 if progress_tracker:
                     progress_tracker.increment_completed()
                 if status_callback:
                     status_callback()
 
-                return  # task completata con successo → si esce
+                return
 
             except BaseException as e:
-                # IGNORA SOLO I SEGNALI CHE DEVONO DAVVERO FERMARE TUTTO
                 if isinstance(e, KeyboardInterrupt):
                     raise
 
@@ -780,29 +788,54 @@ class Orchestrator:
 
                 task.status = TaskStatus.FAILED
 
+                # ✅ SEMPRE aggiornare lo stato task
                 with self.status_manager as sm:
-                    sm.set_task_status(
-                        dag_id,
-                        task_id,
-                        "failed",
-                        execution_id,
-                    )
+                    sm.set_task_status(dag_id, task_id, "failed", execution_id)
+
+                # 🔍 attempt failed (best-effort)
+                if attempt_id:
+                    try:
+                        with self.status_manager as sm:
+                            sm.fail_task_attempt(attempt_id, error=str(e))
+                    except Exception as ex:
+                        self.logger.warning(
+                            f"[task_attempts] fail_task_attempt failed for {task_id}: {ex}"
+                        )
 
                 if attempt <= max_retries:
+                    # retry_count solo se davvero retryiamo
+                    with self.status_manager as sm:
+                        sm.increment_retry_count(dag_id, task_id, execution_id)
+
                     self.logger.info(
                         f"Retrying task {task_id} in {retry_delay} seconds "
-                        f"({attempt}/{max_retries})"
+                        f"(retry {attempt}/{max_retries})"
                     )
+
                     if retry_delay > 0:
                         time.sleep(retry_delay)
+
                     continue
-                else:
-                    if status_callback:
-                        status_callback()
-                    raise Exception(f"Task {task_id} failed: {e}") from e
+
+                if status_callback:
+                    status_callback()
+
+                raise Exception(f"Task {task_id} failed: {e}") from e
 
             finally:
-                # Pulizia del contesto di logging
+                # --- FAIL-SAFE: close ONLY dangling attempts (best-effort) ---
+                if attempt_id:
+                    try:
+                        with self.status_manager as sm:
+                            sm.force_close_attempt_if_running(
+                                attempt_id=attempt_id,
+                                error="aborted",
+                            )
+                    except Exception as ex:
+                        self.logger.warning(
+                            f"[task_attempts] force_close_attempt_if_running failed for {task_id}: {ex}"
+                        )
+
                 if db_handler:
                     db_handler.clear_context()
 

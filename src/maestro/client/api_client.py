@@ -58,15 +58,34 @@ class MaestroAPIClient:
         return response.json()
 
     def run_dag(
-        self, dag_id: str, resume: bool = False, fail_fast: Optional[bool] = None
+        self,
+        dag_id: str,
+        resume: bool = False,
+        fail_fast: Optional[bool] = None,
+        trigger_type: Optional[str] = None,
+        triggered_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Run a previously created DAG"""
-        data = {"resume": resume}
+
+        data: Dict[str, Any] = {
+            "resume": resume,
+        }
+
         if fail_fast is not None:
             data["fail_fast"] = fail_fast
+
+        if trigger_type is not None:
+            data["trigger_type"] = trigger_type
+
+        if triggered_by is not None:
+            data["triggered_by"] = triggered_by
+
         response = self._make_request(
-            method="POST", endpoint=f"/v1/dags/{dag_id}/run", json=data
+            method="POST",
+            endpoint=f"/v1/dags/{dag_id}/run",
+            json=data,
         )
+
         return response.json()
 
     def get_dag_status(

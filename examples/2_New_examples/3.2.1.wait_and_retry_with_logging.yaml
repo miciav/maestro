@@ -3,7 +3,7 @@ abstract: |
 
 dag:
   name: "wait_and_retry_with_logging"
-  fail_fast: true
+  fail_fast: false
   tasks:
     # Initial message
     - task_id: "start"
@@ -42,7 +42,7 @@ dag:
               sys.exit(1)
           else:
             print("Task 2 - Success on this run!")
-      retries: 0
+      retries: 3
       retry_delay: 2
       dependencies: ["unstable_task_1"]
 

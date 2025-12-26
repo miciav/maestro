@@ -341,10 +341,10 @@ class StatusManager:
 
             dag = session.query(DagORM).filter_by(id=dag_id).first()
             if not dag:
-                dag = DagORM(id=dag_id, dag_filepath=dag_filepath)
-                session.add(dag)
-            elif dag_filepath:
-                dag.dag_filepath = dag_filepath
+                raise RuntimeError(
+                    f"DAG '{dag_id}' does not exist. "
+                    "DAG must be created before creating executions."
+                )
 
             return execution_id
 
@@ -883,33 +883,56 @@ class StatusManager:
 
     def save_dag_definition(self, dag, dag_filepath: Optional[str] = None):
         """
-        Persist DAG metadata (NOT the full definition).
+        Persist DAG metadata.
+        - created_at: set once, on first sight
+        - updated_at: set ONLY if definition_hash changes
         """
-        # calcola hash stabile del file yaml
+
+        # 1️⃣ Calcolo hash stabile del file YAML
+        definition_hash = None
         if dag_filepath:
             with open(dag_filepath, "r") as f:
                 raw = f.read()
             definition_hash = hashlib.sha256(raw.encode()).hexdigest()
-        else:
-            definition_hash = None
+
+        now = datetime.now()
 
         with self.Session.begin() as session:
             dag_orm = session.query(DagORM).filter_by(id=dag.dag_id).first()
+
+            # --------------------------------------------------
+            # 🆕 DAG mai vista prima
+            # --------------------------------------------------
             if not dag_orm:
                 dag_orm = DagORM(
                     id=dag.dag_id,
                     definition_hash=definition_hash or "",
                     dag_filepath=dag_filepath,
-                    created_at=datetime.now(),
+                    created_at=now,
+                    updated_at=now,
                     is_active=1,
                 )
                 session.add(dag_orm)
-            else:
-                if definition_hash:
-                    dag_orm.definition_hash = definition_hash
-                if dag_filepath:
-                    dag_orm.dag_filepath = dag_filepath
-                dag_orm.updated_at = datetime.now()
+                return
+
+            # --------------------------------------------------
+            # 🔄 DAG già esistente
+            # --------------------------------------------------
+
+            changed = False
+
+            # 1) confronto hash
+            if definition_hash and definition_hash != dag_orm.definition_hash:
+                dag_orm.definition_hash = definition_hash
+                changed = True
+
+            # 2) aggiornamento filepath (non implica modifica logica)
+            if dag_filepath and dag_filepath != dag_orm.dag_filepath:
+                dag_orm.dag_filepath = dag_filepath
+
+            # 3) updated_at SOLO se la DAG è cambiata
+            if changed:
+                dag_orm.updated_at = now
 
     # ----------------------------------------------------------------------
 
@@ -1157,3 +1180,119 @@ class StatusManager:
                 return max(with_started, key=lambda t: t.started_at)
 
             return max(final_tasks, key=lambda t: t.insertion_order)
+
+    def update_execution_trigger_context(
+        self,
+        dag_id: str,
+        execution_id: str,
+        trigger_type: str,
+        triggered_by: str,
+    ) -> None:
+        with self.Session.begin() as session:
+            execution = (
+                session.query(ExecutionORM)
+                .filter_by(id=execution_id, dag_id=dag_id)
+                .first()
+            )
+            if not execution:
+                return
+
+            execution.trigger_type = trigger_type
+            execution.triggered_by = triggered_by
+
+    def increment_retry_count(
+        self,
+        dag_id: str,
+        task_id: str,
+        execution_id: str,
+    ) -> None:
+        with self.Session.begin() as session:
+            task = (
+                session.query(TaskORM)
+                .filter_by(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                )
+                .first()
+            )
+            if not task:
+                return
+
+            task.retry_count += 1
+
+    def create_task_attempt(
+        self,
+        dag_id: str,
+        task_id: str,
+        execution_id: str,
+        attempt_number: int,
+    ) -> str:
+        with self.Session.begin() as session:
+            task = (
+                session.query(TaskORM)
+                .filter_by(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                )
+                .first()
+            )
+
+            if not task:
+                return None
+
+            attempt = TaskAttemptORM(
+                id=uuid.uuid4().hex,
+                task_pk=task.id,
+                execution_id=execution_id,
+                attempt_number=attempt_number,
+                status="running",
+                started_at=datetime.now(),
+                pid=threading.current_thread().ident,
+                thread_id=str(threading.current_thread().ident),
+            )
+
+            session.add(attempt)
+            return attempt.id
+
+    def complete_task_attempt(
+        self, attempt_id: str, status: str, error: Optional[str] = None
+    ):
+        if not attempt_id:
+            return
+        with self.Session.begin() as session:
+            attempt = session.get(TaskAttemptORM, attempt_id)
+            if not attempt:
+                return
+            attempt.status = status
+            attempt.completed_at = datetime.now()
+            attempt.error = error
+
+    def fail_task_attempt(self, attempt_id: str, error: str):
+        self.complete_task_attempt(
+            attempt_id=attempt_id,
+            status="failed",
+            error=error,
+        )
+
+    def force_close_attempt_if_running(self, attempt_id: str, error: str = "aborted"):
+        if not attempt_id:
+            return
+
+        with self.Session.begin() as session:
+            attempt = session.get(TaskAttemptORM, attempt_id)
+            if not attempt:
+                return
+
+            # 🔒 NO-OP se già chiuso
+            if attempt.completed_at is not None:
+                return
+
+            if attempt.status != "running":
+                return
+
+            # 🔥 chiusura forzata SOLO se ancora running
+            attempt.status = "failed"
+            attempt.completed_at = datetime.now()
+            attempt.error = error
