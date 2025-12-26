@@ -18,6 +18,9 @@ the server to record runtime status and expose queries for monitoring and
 control operations.
 """
 
+import json
+import uuid
+
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 
@@ -909,7 +912,7 @@ class StatusManager:
             dag_orm = session.query(DagORM).filter_by(id=dag.dag_id).first()
 
             # --------------------------------------------------
-            # 🆕 DAG mai vista prima
+            # Caso: DAG mai vista prima
             # --------------------------------------------------
             if not dag_orm:
                 dag_orm = DagORM(
@@ -924,23 +927,27 @@ class StatusManager:
                 return
 
             # --------------------------------------------------
-            # 🔄 DAG già esistente
+            # Caso: DAG già esistente
             # --------------------------------------------------
 
-            changed = False
+            else:
+                changed = False
 
-            # 1) confronto hash
-            if definition_hash and definition_hash != dag_orm.definition_hash:
-                dag_orm.definition_hash = definition_hash
-                changed = True
+                if definition_hash and definition_hash != dag_orm.definition_hash:
+                    dag_orm.definition_hash = definition_hash
+                    changed = True
 
-            # 2) aggiornamento filepath (non implica modifica logica)
-            if dag_filepath and dag_filepath != dag_orm.dag_filepath:
-                dag_orm.dag_filepath = dag_filepath
+                if dag_filepath and dag_filepath != dag_orm.dag_filepath:
+                    dag_orm.dag_filepath = dag_filepath
 
-            # 3) updated_at SOLO se la DAG è cambiata
-            if changed:
-                dag_orm.updated_at = now
+                if changed:
+                    dag_orm.updated_at = now
+
+            # --------------------------------------------------
+            # SEMPRE ESEGUITO
+            # --------------------------------------------------
+
+            self.save_task_dependencies_from_dag(dag)
 
     # ----------------------------------------------------------------------
 
@@ -1304,3 +1311,68 @@ class StatusManager:
             attempt.status = "failed"
             attempt.completed_at = datetime.now()
             attempt.error = error
+
+    def save_task_dependencies_from_dag(self, dag) -> None:
+        """
+        Persist structural task dependencies for a DAG.
+        One row per task (node-centric DAG representation).
+        """
+
+        print(">>> save_task_dependencies_from_dag CALLED")
+        print(">>> dag =", dag)
+        print(">>> dag.tasks =", getattr(dag, "tasks", None))
+
+        dag_id = dag.dag_id
+
+        # -------------------------------------------------
+        # 1️⃣ Costruzione mappe DAL DAG IN MEMORIA
+        # -------------------------------------------------
+
+        upstream_map: dict[str, list[str]] = {}
+        downstream_map: dict[str, list[str]] = {}
+        task_meta: dict[str, dict] = {}
+
+        for task_id, task in dag.tasks.items():
+            deps = list(getattr(task, "dependencies", []) or [])
+
+            upstream_map[task_id] = deps
+            downstream_map.setdefault(task_id, [])
+
+            task_meta[task_id] = {
+                "condition": getattr(task, "condition", None),
+                "dependency_policy": getattr(task, "dependency_policy", "all"),
+            }
+
+            for upstream in deps:
+                downstream_map.setdefault(upstream, []).append(task_id)
+
+        # -------------------------------------------------
+        # 2️⃣ Persistenza DB (idempotente)
+        # -------------------------------------------------
+
+        with self.Session.begin() as session:
+            session.query(TaskDependencyORM).filter_by(dag_id=dag_id).delete()
+
+            # Ordine canonico: tasks.insertion_order
+            task_rows = (
+                session.query(TaskORM.task_id)
+                .filter(TaskORM.dag_id == dag_id)
+                .order_by(TaskORM.insertion_order)
+                .all()
+            )
+
+            all_task_ids = [row.task_id for row in task_rows]
+
+            for task_id in all_task_ids:
+                dep = TaskDependencyORM(
+                    id=uuid.uuid4().hex,
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    upstream_task_ids=json.dumps(upstream_map.get(task_id, [])),
+                    downstream_task_ids=json.dumps(downstream_map.get(task_id, [])),
+                    condition=task_meta.get(task_id, {}).get("condition"),
+                    dependency_policy=task_meta.get(task_id, {}).get(
+                        "dependency_policy", "all"
+                    ),
+                )
+                session.add(dep)

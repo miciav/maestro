@@ -136,8 +136,9 @@ class TaskDependencyORM(Base):
     dag_id = Column(String, ForeignKey("dags.id"), nullable=False)
 
     task_id = Column(String, nullable=False)
-    upstream_task_id = Column(String, nullable=False)
-    downstream_task_id = Column(String, nullable=False)
+
+    upstream_task_ids = Column(Text)  # JSON list
+    downstream_task_ids = Column(Text)  # JSON list
 
     condition = Column(Text)
     dependency_policy = Column(String)  # all | any | none

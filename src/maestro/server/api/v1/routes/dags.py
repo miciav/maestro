@@ -240,6 +240,9 @@ async def run_dag(
         # --------------------------------------------------
         dag = orchestrator.load_dag_from_file(dag_filepath, dag_id=dag_id)
 
+        with orchestrator.status_manager as sm:
+            sm.save_task_dependencies_from_dag(dag)
+
         # --------------------------------------------------
         # 4️⃣ Risoluzione fail_fast
         # --------------------------------------------------
