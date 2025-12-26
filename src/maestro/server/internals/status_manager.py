@@ -21,7 +21,15 @@ control operations.
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 
-from .models import Base, DagORM, ExecutionORM, LogORM, TaskORM
+from .models import (
+    Base,
+    DagORM,
+    ExecutionORM,
+    LogORM,
+    TaskAttemptORM,
+    TaskDependencyORM,
+    TaskORM,
+)
 
 # Generatore di nomi in stile Docker - liste compatte di aggettivi e sostantivi
 DOCKER_ADJECTIVES = """
