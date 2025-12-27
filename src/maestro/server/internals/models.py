@@ -156,7 +156,7 @@ class LogORM(Base):
 
     execution_id = Column(String, nullable=False)  # run_name
     task_id = Column(String, nullable=True)  # tasks.task_id
-    attempt_id = Column(Integer, nullable=True)  # attempt_number
+    attempt_n = Column(Integer, nullable=True)  # attempt_number
 
     status = Column(String)  # attempt status
 

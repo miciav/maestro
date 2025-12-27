@@ -43,6 +43,7 @@ class DAGRunRequest(BaseModel):
 class DAGRunResponse(BaseModel):
     dag_id: str
     execution_id: str
+    run_name: Optional[str]
     status: str
     message: str
 
@@ -271,9 +272,13 @@ async def run_dag(
         # --------------------------------------------------
         # 6️⃣ Response
         # --------------------------------------------------
+        with orchestrator.status_manager as sm:
+            run_name = sm.get_execution_run_name(execution_id)
+
         return DAGRunResponse(
             dag_id=dag.dag_id,
             execution_id=execution_id,
+            run_name=run_name,
             status="submitted",
             message=f"DAG '{dag.dag_id}' submitted for execution.",
         )

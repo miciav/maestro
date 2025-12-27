@@ -751,7 +751,7 @@ class StatusManager:
                 dag_id=dag_id,
                 execution_id=execution_run_name,  # <-- qui dentro salviamo run_name
                 task_id=task_id,  # <-- task_id string
-                attempt_id=attempt_number,  # <-- attempt_number
+                attempt_n=attempt_number,  # <-- attempt_number
                 status=status,  # <-- status dell'attempt
                 level=level,
                 message=message,
@@ -894,6 +894,7 @@ class StatusManager:
                         "task_id": log.task_id,
                         "level": log.level,
                         "message": log.message,
+                        "attempt_n": log.attempt_n,
                         "timestamp": log.timestamp.isoformat(),
                         "thread_id": log.thread_id,
                     }

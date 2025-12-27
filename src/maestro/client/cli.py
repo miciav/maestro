@@ -170,7 +170,8 @@ def run(
         console.print("[red]Server did not return execution_id[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[green]Execution started: {execution_id}[/green]")
+    execution_run_name = run_info.get("run_name") or execution_id
+    console.print(f"[green]Execution started: {execution_run_name}[/green]")
 
     # -----------------------------------------------------------------------
     # 3A — DETACHED MODE
@@ -228,6 +229,15 @@ def run(
             ts = log_entry["timestamp"].split("T")[1].split(".")[0]
             task = log_entry["task_id"]
             msg = log_entry["message"]
+            attempt_n = log_entry.get("attempt_n")
+
+            attempt_suffix = ""
+            if attempt_n:
+                try:
+                    if int(attempt_n) > 1:
+                        attempt_suffix = f" (Attempt number: {attempt_n})"
+                except (TypeError, ValueError):
+                    pass
 
             style = {
                 "ERROR": "red",
@@ -237,7 +247,7 @@ def run(
             }.get(level, "white")
 
             console.print(
-                f"[dim]{ts}[/dim] [{style}]{level}[/] [magenta]{task}[/]: {msg}"
+                f"[dim]{ts}[/dim] [{style}]{level}[/] [magenta]{task}[/]: {msg}{attempt_suffix}"
             )
 
     except KeyboardInterrupt:
@@ -432,8 +442,17 @@ def log(
                 else log_entry["timestamp"]
             )
 
+            attempt_n = log_entry.get("attempt_n")
+            attempt_suffix = ""
+            if attempt_n:
+                try:
+                    if int(attempt_n) > 1:
+                        attempt_suffix = f" (Attempt number: {attempt_n})"
+                except (TypeError, ValueError):
+                    pass
+
             console.print(
-                f"[dim]{timestamp}[/dim] [{level_style}]{log_entry['level']}[/{level_style}] [magenta]{log_entry['task_id']}[/magenta]: {log_entry['message']}"
+                f"[dim]{timestamp}[/dim] [{level_style}]{log_entry['level']}[/{level_style}] [magenta]{log_entry['task_id']}[/magenta]: {log_entry['message']}{attempt_suffix}"
             )
 
         console.print()
@@ -503,9 +522,17 @@ def attach(
                 if "T" in log_entry["timestamp"]
                 else log_entry["timestamp"]
             )
+            attempt_n = log_entry.get("attempt_n")
+            attempt_suffix = ""
+            if attempt_n:
+                try:
+                    if int(attempt_n) > 1:
+                        attempt_suffix = f" (Attempt number: {attempt_n})"
+                except (TypeError, ValueError):
+                    pass
 
             console.print(
-                f"[dim]{timestamp}[/dim] [{level_style}]{log_entry['level']}[/{level_style}] [magenta]{log_entry['task_id']}[/magenta]: {log_entry['message']}"
+                f"[dim]{timestamp}[/dim] [{level_style}]{log_entry['level']}[/{level_style}] [magenta]{log_entry['task_id']}[/magenta]: {log_entry['message']}{attempt_suffix}"
             )
 
     except KeyboardInterrupt:
