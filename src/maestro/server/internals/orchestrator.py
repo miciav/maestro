@@ -35,11 +35,20 @@ class DatabaseLogHandler(logging.Handler):
     # -------------------------------
     # CONTEXT HANDLING (THREAD-SAFE)
     # -------------------------------
-    def set_context(self, dag_id: str, execution_id: str, task_id: str = None):
-        """Assigns context to the current thread only."""
-        self._ctx.dag_id = dag_id
-        self._ctx.execution_id = execution_id
-        self._ctx.task_id = task_id
+
+    def set_context(
+        self,
+        dag_id: str,
+        execution_run_name: str,
+        task_id: str | None = None,
+        attempt_number: int | None = None,
+        status: str | None = None,
+    ):
+        self.dag_id = dag_id
+        self.execution_run_name = execution_run_name
+        self.task_id = task_id
+        self.attempt_number = attempt_number
+        self.status = status
 
     def clear_context(self):
         """Clears thread context after task finishes."""
@@ -741,7 +750,16 @@ class Orchestrator:
                     status_callback()
 
                 if db_handler:
-                    db_handler.set_context(dag_id, execution_id, task_id)
+                    try:
+                        db_handler.set_context(
+                            dag_id=dag_id,
+                            execution_run_name=execution_id,  # (anche se è ancora UUID, intanto non deve crashare)
+                            task_id=task_id,
+                            attempt_number=attempt,
+                            status="running",
+                        )
+                    except Exception as ex:
+                        self.logger.warning(f"[db_handler] set_context failed: {ex}")
 
                 task.dag_id = dag_id
                 task.execution_id = execution_id
@@ -1022,7 +1040,7 @@ def evaluate_dependencies(
     policy = str(policy).lower()
     dependencies = getattr(task, "dependencies", []) or []
 
-    # ⚠️ NORMALIZZAZIONE CRITICA DELLA CONDITION
+    # NORMALIZZAZIONE CRITICA DELLA CONDITION
     raw_condition = getattr(task, "condition", None)
     condition = raw_condition if raw_condition not in ("", False) else None
 

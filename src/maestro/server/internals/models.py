@@ -150,22 +150,19 @@ class TaskDependencyORM(Base):
 class LogORM(Base):
     __tablename__ = "logs"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(String, primary_key=True)
 
     dag_id = Column(String, ForeignKey("dags.id"), nullable=False)
-    execution_id = Column(String, nullable=False)
 
-    task_pk = Column(String, ForeignKey("tasks.id"), nullable=True)
-    attempt_id = Column(String, nullable=True)
+    execution_id = Column(String, nullable=False)  # run_name
+    task_id = Column(String, nullable=True)  # tasks.task_id
+    attempt_id = Column(Integer, nullable=True)  # attempt_number
+
+    status = Column(String)  # attempt status
 
     level = Column(String)
     message = Column(Text)
-
-    timestamp = Column(
-        DateTime,
-        default=datetime.datetime.utcnow,
-        nullable=False,
-    )
+    timestamp = Column(DateTime)
 
     thread_id = Column(String)
     pid = Column(Integer)

@@ -737,31 +737,22 @@ class StatusManager:
     def log_message(
         self,
         dag_id: str,
-        execution_id: str,
+        execution_run_name: str,
         task_id: Optional[str],
+        attempt_number: Optional[int],
+        status: Optional[str],
         level: str,
         message: str,
         timestamp: Optional[datetime] = None,
     ):
         with self.Session.begin() as session:
-            task_pk = None
-            if task_id:
-                task = (
-                    session.query(TaskORM)
-                    .filter_by(
-                        dag_id=dag_id,
-                        task_id=task_id,
-                        execution_id=execution_id,
-                    )
-                    .first()
-                )
-                task_pk = task.id if task else None
-
             log = LogORM(
+                id=uuid.uuid4().hex,
                 dag_id=dag_id,
-                execution_id=execution_id,
-                task_pk=task_pk,
-                attempt_id=None,
+                execution_id=execution_run_name,  # <-- qui dentro salviamo run_name
+                task_id=task_id,  # <-- task_id string
+                attempt_id=attempt_number,  # <-- attempt_number
+                status=status,  # <-- status dell'attempt
                 level=level,
                 message=message,
                 timestamp=timestamp or datetime.now(),
@@ -771,21 +762,43 @@ class StatusManager:
             session.add(log)
 
     # ----------------------------------------------------------------------
-    # Method: add_log
+
     def add_log(
         self,
         dag_id: str,
-        execution_id: str,
-        task_id: str,
         message: str,
         level: str = "INFO",
         timestamp: Optional[datetime] = None,
+        # --- NEW preferred ---
+        execution_run_name: Optional[str] = None,
+        attempt_number: Optional[int] = None,
+        status: Optional[str] = None,
+        task_id: Optional[str] = None,
+        # --- LEGACY (compat) ---
+        execution_id: Optional[str] = None,
     ):
-        """Helper wrapper for log_message() with timestamp support."""
+        """
+        Backward-compatible log helper.
+
+        Preferred: pass execution_run_name.
+        Legacy: pass execution_id and we resolve run_name from DB.
+        """
+
+        # Resolve run_name if caller passed execution_id (legacy)
+        if not execution_run_name and execution_id:
+            resolved = self.get_execution_run_name(execution_id)
+            # fallback ultra-safe: if not found, keep execution_id so logs are not lost
+            execution_run_name = resolved or execution_id
+
+        # If still missing, make it explicit but don't crash
+        execution_run_name = execution_run_name or "unknown_run"
+
         self.log_message(
             dag_id=dag_id,
-            execution_id=execution_id,
+            execution_run_name=execution_run_name,
             task_id=task_id,
+            attempt_number=attempt_number,
+            status=status,
             level=level,
             message=message,
             timestamp=timestamp,
@@ -858,7 +871,7 @@ class StatusManager:
         return f"{base_name}_{suffix}"
 
     # ----------------------------------------------------------------------
-    # Method: get_latest_execution
+
     def get_latest_execution(self, dag_id: str) -> Optional[Dict[str, Any]]:
         """Return a summary dict for the latest execution of `dag_id`.
 
@@ -889,6 +902,16 @@ class StatusManager:
                     "pid": execution.pid,
                 }
             return None
+
+    # ----------------------------------------------------------------------
+
+    def get_execution_run_name(self, execution_id: str) -> Optional[str]:
+        """Return run_name for a given execution id."""
+        if not execution_id:
+            return None
+        with self.Session() as session:
+            e = session.query(ExecutionORM).filter_by(id=execution_id).first()
+            return e.run_name if e else None
 
     # ----------------------------------------------------------------------
 
