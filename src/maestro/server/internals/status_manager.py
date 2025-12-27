@@ -874,20 +874,24 @@ class StatusManager:
         with self.Session() as session:
             query = session.query(LogORM).filter_by(dag_id=dag_id)
             if execution_id:
-                query = query.filter_by(execution_id=execution_id)
+                execution = (
+                    session.query(ExecutionORM)
+                    .filter_by(id=execution_id)
+                    .first()
+                )
+                run_name = execution.run_name if execution else None
+                if run_name and run_name != execution_id:
+                    query = query.filter(LogORM.execution_id.in_([execution_id, run_name]))
+                else:
+                    query = query.filter_by(execution_id=execution_id)
 
             logs = query.order_by(LogORM.timestamp.desc()).limit(limit).all()
 
             result = []
             for log in logs:
-                task_id = None
-                if log.task_pk:
-                    task = session.get(TaskORM, log.task_pk)
-                    task_id = task.task_id if task else None
-
                 result.append(
                     {
-                        "task_id": task_id,
+                        "task_id": log.task_id,
                         "level": log.level,
                         "message": log.message,
                         "timestamp": log.timestamp.isoformat(),

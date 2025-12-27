@@ -65,11 +65,13 @@ class DatabaseLogHandler(logging.Handler):
     def emit(self, record):
         """Store logs in the database, per-thread context."""
         dag_id = getattr(self._ctx, "dag_id", None)
-        execution_id = getattr(self._ctx, "execution_id", None)
+        execution_run_name = getattr(self._ctx, "execution_id", None)
         task_id = getattr(self._ctx, "task_id", None)
+        attempt_number = getattr(self._ctx, "attempt_number", None)
+        status = getattr(self._ctx, "status", None)
 
         # If we have no per-thread context: ignore this log
-        if not dag_id or not execution_id:
+        if not dag_id or not execution_run_name:
             return
 
         try:
@@ -85,8 +87,10 @@ class DatabaseLogHandler(logging.Handler):
             with self.status_manager as sm:
                 sm.log_message(
                     dag_id=dag_id,
-                    execution_id=execution_id,
+                    execution_run_name=execution_run_name,
                     task_id=task_id or "system",
+                    attempt_number=attempt_number,
+                    status=status,
                     level=record.levelname,
                     message=msg,
                     timestamp=timestamp,
