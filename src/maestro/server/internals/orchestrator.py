@@ -44,17 +44,20 @@ class DatabaseLogHandler(logging.Handler):
         attempt_number: int | None = None,
         status: str | None = None,
     ):
-        self.dag_id = dag_id
-        self.execution_run_name = execution_run_name
-        self.task_id = task_id
-        self.attempt_number = attempt_number
-        self.status = status
+        # Salva tutto nel thread-local context
+        self._ctx.dag_id = dag_id
+        self._ctx.execution_id = execution_run_name
+        self._ctx.task_id = task_id
+        self._ctx.attempt_number = attempt_number
+        self._ctx.status = status
 
     def clear_context(self):
-        """Clears thread context after task finishes."""
+        """Clears thread-local context after task finishes."""
         self._ctx.dag_id = None
         self._ctx.execution_id = None
         self._ctx.task_id = None
+        self._ctx.attempt_number = None
+        self._ctx.status = None
 
     # -------------------------------
     # LOG EMISSION
@@ -441,8 +444,39 @@ class Orchestrator:
                         if status_callback:
                             status_callback()
 
+            no_progress_ticks = 0
+            last_snapshot = None
+
             # Main execution loop
             while pending_tasks or running_tasks:
+
+                snapshot = (
+                    tuple(sorted(pending_tasks)),
+                    tuple(sorted(running_tasks.keys())),
+                    tuple(sorted(completed_tasks)),
+                    tuple(sorted(failed_tasks)),
+                    tuple(sorted(skipped_tasks)),
+                    stop_scheduling,
+                )
+
+                if snapshot == last_snapshot and not running_tasks and pending_tasks:
+                    no_progress_ticks += 1
+                else:
+                    no_progress_ticks = 0
+                last_snapshot = snapshot
+
+                # dopo ~3 secondi (60 * 0.05) senza progresso: deadlock
+                if no_progress_ticks >= 60:
+                    self.logger.error(
+                        f"[DEADLOCK] No progress for execution {execution_id}. "
+                        f"Pending tasks cannot be scheduled: {sorted(pending_tasks)}"
+                    )
+                    # scegli una policy: io direi "failed" per chiarezza
+                    for tid in list(pending_tasks):
+                        sm.set_task_status(dag_id, tid, "failed", execution_id)
+                        failed_tasks.add(tid)
+                        pending_tasks.remove(tid)
+                    break
 
                 self.logger.warning(
                     "[LOOP SNAPSHOT] "
@@ -841,8 +875,8 @@ class Orchestrator:
                 raise Exception(f"Task {task_id} failed: {e}") from e
 
             finally:
-                # --- FAIL-SAFE: close ONLY dangling attempts (best-effort) ---
-                if attempt_id:
+                # 🔒 force-close SOLO se l'attempt NON è stato chiuso esplicitamente
+                if attempt_id and task.status == TaskStatus.RUNNING:
                     try:
                         with self.status_manager as sm:
                             sm.force_close_attempt_if_running(

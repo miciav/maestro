@@ -790,8 +790,70 @@ class StatusManager:
             # fallback ultra-safe: if not found, keep execution_id so logs are not lost
             execution_run_name = resolved or execution_id
 
+        # Ensure execution_id is available (reverse resolve)
+        if execution_id is None and execution_run_name:
+            execution_id = self.get_execution_id_from_run_name(execution_run_name)
+
         # If still missing, make it explicit but don't crash
         execution_run_name = execution_run_name or "unknown_run"
+
+        # AUTO-FILL attempt_number e status da task_attempts
+
+        if task_id and execution_id and (attempt_number is None or status is None):
+            session = self.Session()
+
+            attempt = (
+                session.query(TaskAttemptORM)
+                .filter(
+                    TaskAttemptORM.execution_id == execution_id,
+                    TaskAttemptORM.task_pk == task_id,
+                )
+                .order_by(TaskAttemptORM.attempt_number.desc())
+                .first()
+            )
+
+            if attempt:
+                if attempt_number is None:
+                    attempt_number = attempt.attempt_number
+
+                if status is None:
+                    status = attempt.status
+
+            session.close()
+
+        # AUTO-FILL attempt_number e status da task_attempts
+        # (serve risolvere task_pk dalla tabella tasks)
+        if task_id and execution_id and (attempt_number is None or status is None):
+            with self.Session.begin() as session:
+                # 1) trova la riga task (serve per ricavare task_pk = tasks.id)
+                task_row = (
+                    session.query(TaskORM)
+                    .filter_by(
+                        dag_id=dag_id,
+                        task_id=task_id,  # <-- stringa ("start", "final", ...)
+                        execution_id=execution_id,  # <-- id vero di executions.id
+                    )
+                    .first()
+                )
+
+                if task_row:
+                    # 2) trova l'ultimo attempt per quella task_pk
+                    attempt = (
+                        session.query(TaskAttemptORM)
+                        .filter(
+                            TaskAttemptORM.execution_id == execution_id,
+                            TaskAttemptORM.task_pk
+                            == task_row.id,  # <-- QUESTA è la chiave giusta
+                        )
+                        .order_by(TaskAttemptORM.attempt_number.desc())
+                        .first()
+                    )
+
+                    if attempt:
+                        if attempt_number is None:
+                            attempt_number = attempt.attempt_number
+                        if status is None:
+                            status = attempt.status
 
         self.log_message(
             dag_id=dag_id,
@@ -1299,13 +1361,39 @@ class StatusManager:
     ):
         if not attempt_id:
             return
+
+        # ci servono per il log finale, ma li prendiamo senza nested transaction
+        dag_id = None
+        execution_id = None
+        task_id = None
+
         with self.Session.begin() as session:
             attempt = session.get(TaskAttemptORM, attempt_id)
             if not attempt:
                 return
+
+            # aggiorna attempt
             attempt.status = status
             attempt.completed_at = datetime.now()
             attempt.error = error
+
+            # prepara info per log finale (senza scriverlo qui!)
+            task = session.get(TaskORM, attempt.task_pk)
+            if task:
+                dag_id = task.dag_id
+                execution_id = attempt.execution_id
+                task_id = task.task_id
+
+        # ✅ FUORI dalla transazione: niente lock annidati
+        if dag_id and execution_id and task_id:
+            level = "INFO" if status == "completed" else "ERROR"
+            self.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=f"[Task] finished with status {status}",
+                level=level,
+            )
 
     def fail_task_attempt(self, attempt_id: str, error: str):
         self.complete_task_attempt(

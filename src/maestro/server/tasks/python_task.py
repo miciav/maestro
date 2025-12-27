@@ -1,13 +1,14 @@
-from typing import Optional
-from pydantic import Field
-import traceback
-import io
 import contextlib
-import threading
+import io
 import sys
+import threading
+import traceback
+from typing import Optional
 
-from maestro.server.tasks.base import BaseTask
+from pydantic import Field
+
 from maestro.server.internals.status_manager import StatusManager
+from maestro.server.tasks.base import BaseTask
 
 
 class PythonTask(BaseTask):
@@ -17,8 +18,12 @@ class PythonTask(BaseTask):
     with proper dag_id, execution_id, and formatted message.
     """
 
-    code: Optional[str] = Field(default=None, description="Inline Python code to execute")
-    script_path: Optional[str] = Field(default=None, description="Path to a .py file to execute")
+    code: Optional[str] = Field(
+        default=None, description="Inline Python code to execute"
+    )
+    script_path: Optional[str] = Field(
+        default=None, description="Path to a .py file to execute"
+    )
 
     def execute_local(self):
         """
@@ -29,7 +34,7 @@ class PythonTask(BaseTask):
         sm = StatusManager.get_instance()
 
         dag_id = getattr(self, "dag_id", None) or "unknown_dag"
-        execution_id = getattr(self, "execution_id", None) or "unknown_execution"
+        execution_id = getattr(self, "execution_id", None)
         task_id = self.task_id
 
         # useremo la print "vera" solo per la console server
@@ -44,7 +49,7 @@ class PythonTask(BaseTask):
                 execution_id=execution_id,
                 task_id=task_id,
                 message=text,
-                level=level
+                level=level,
             )
 
         def task_print(*args, **kwargs):
