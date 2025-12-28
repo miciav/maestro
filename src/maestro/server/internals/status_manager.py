@@ -1422,7 +1422,7 @@ class StatusManager:
             attempt.completed_at = datetime.now()
             attempt.error = error
 
-    def save_task_dependencies_from_dag(self, dag, execution_run_name: str) -> None:
+    def save_task_dependencies_from_dag(self, dag, execution_id: str) -> None:
         """
         Persist structural task dependencies for a DAG execution.
         One row per task (node-centric DAG representation).
@@ -1431,7 +1431,7 @@ class StatusManager:
         print(">>> save_task_dependencies_from_dag CALLED")
         print(">>> dag =", dag)
         print(">>> dag.tasks =", getattr(dag, "tasks", None))
-        print(">>> execution_run_name =", execution_run_name)
+        print(f">>> execution_id = {execution_id}")
 
         dag_id = dag.dag_id
 
@@ -1464,13 +1464,18 @@ class StatusManager:
         with self.Session.begin() as session:
             session.query(TaskDependencyORM).filter_by(
                 dag_id=dag_id,
-                execution_id=execution_run_name,
+                execution_id=execution_id,
             ).delete()
 
             # Ordine canonico: tasks.insertion_order
+
             task_rows = (
                 session.query(TaskORM.task_id)
-                .filter(TaskORM.dag_id == dag_id)
+                .filter(
+                    TaskORM.dag_id == dag_id,
+                    TaskORM.execution_id
+                    == execution_id,  # 🔥 QUESTA ERA LA PARTE MANCANTE
+                )
                 .order_by(TaskORM.insertion_order)
                 .all()
             )
@@ -1481,7 +1486,7 @@ class StatusManager:
                 dep = TaskDependencyORM(
                     id=uuid.uuid4().hex,
                     dag_id=dag_id,
-                    execution_id=execution_run_name,  # ✅ QUI
+                    execution_id=execution_id,
                     task_id=task_id,
                     upstream_task_ids=json.dumps(upstream_map.get(task_id, [])),
                     downstream_task_ids=json.dumps(downstream_map.get(task_id, [])),

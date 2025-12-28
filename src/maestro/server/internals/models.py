@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
@@ -131,18 +132,20 @@ class TaskAttemptORM(Base):
 class TaskDependencyORM(Base):
     __tablename__ = "task_dependencies"
 
+    __table_args__ = (UniqueConstraint("execution_id", "task_id"),)
+
     id = Column(String, primary_key=True)
 
     dag_id = Column(String, ForeignKey("dags.id"), nullable=False)
 
     execution_id = Column(
         String,
-        ForeignKey("executions.run_name"),
+        ForeignKey("executions.id"),
         nullable=False,
         index=True,
     )
 
-    task_id = Column(String, nullable=False)
+    task_id = Column(String, ForeignKey("tasks.task_id"), nullable=False)
 
     upstream_task_ids = Column(Text)  # JSON list
     downstream_task_ids = Column(Text)  # JSON list

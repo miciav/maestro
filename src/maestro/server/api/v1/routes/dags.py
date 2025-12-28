@@ -212,6 +212,8 @@ async def run_dag(
 
             latest_execution = sm.get_latest_execution(dag_id)
 
+            is_new_execution = False
+
             if latest_execution and latest_execution["status"] == "queued":
                 execution_id = latest_execution["execution_id"]
 
@@ -236,6 +238,16 @@ async def run_dag(
                     triggered_by=triggered_by,
                 )
 
+                is_new_execution = True
+
+            if is_new_execution:
+                execution_run_name = sm.get_execution_run_name(execution_id)
+
+                sm.save_task_dependencies_from_dag(
+                    dag,
+                    execution_id=execution_id,
+                )
+
         # --------------------------------------------------
         # 3️⃣ Caricamento DAG dal file
         # --------------------------------------------------
@@ -246,7 +258,7 @@ async def run_dag(
 
             sm.save_task_dependencies_from_dag(
                 dag,
-                execution_run_name=execution_run_name,
+                execution_id=execution_id,
             )
 
         # --------------------------------------------------
