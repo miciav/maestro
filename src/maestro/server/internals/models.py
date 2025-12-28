@@ -135,6 +135,13 @@ class TaskDependencyORM(Base):
 
     dag_id = Column(String, ForeignKey("dags.id"), nullable=False)
 
+    execution_id = Column(
+        String,
+        ForeignKey("executions.run_name"),
+        nullable=False,
+        index=True,
+    )
+
     task_id = Column(String, nullable=False)
 
     upstream_task_ids = Column(Text)  # JSON list

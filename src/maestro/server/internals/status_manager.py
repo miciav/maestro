@@ -875,13 +875,13 @@ class StatusManager:
             query = session.query(LogORM).filter_by(dag_id=dag_id)
             if execution_id:
                 execution = (
-                    session.query(ExecutionORM)
-                    .filter_by(id=execution_id)
-                    .first()
+                    session.query(ExecutionORM).filter_by(id=execution_id).first()
                 )
                 run_name = execution.run_name if execution else None
                 if run_name and run_name != execution_id:
-                    query = query.filter(LogORM.execution_id.in_([execution_id, run_name]))
+                    query = query.filter(
+                        LogORM.execution_id.in_([execution_id, run_name])
+                    )
                 else:
                     query = query.filter_by(execution_id=execution_id)
 
@@ -1032,12 +1032,6 @@ class StatusManager:
 
                 if changed:
                     dag_orm.updated_at = now
-
-            # --------------------------------------------------
-            # SEMPRE ESEGUITO
-            # --------------------------------------------------
-
-            self.save_task_dependencies_from_dag(dag)
 
     # ----------------------------------------------------------------------
 
@@ -1428,15 +1422,16 @@ class StatusManager:
             attempt.completed_at = datetime.now()
             attempt.error = error
 
-    def save_task_dependencies_from_dag(self, dag) -> None:
+    def save_task_dependencies_from_dag(self, dag, execution_run_name: str) -> None:
         """
-        Persist structural task dependencies for a DAG.
+        Persist structural task dependencies for a DAG execution.
         One row per task (node-centric DAG representation).
         """
 
         print(">>> save_task_dependencies_from_dag CALLED")
         print(">>> dag =", dag)
         print(">>> dag.tasks =", getattr(dag, "tasks", None))
+        print(">>> execution_run_name =", execution_run_name)
 
         dag_id = dag.dag_id
 
@@ -1463,11 +1458,14 @@ class StatusManager:
                 downstream_map.setdefault(upstream, []).append(task_id)
 
         # -------------------------------------------------
-        # 2️⃣ Persistenza DB (idempotente)
+        # 2️⃣ Persistenza DB (idempotente per execution)
         # -------------------------------------------------
 
         with self.Session.begin() as session:
-            session.query(TaskDependencyORM).filter_by(dag_id=dag_id).delete()
+            session.query(TaskDependencyORM).filter_by(
+                dag_id=dag_id,
+                execution_id=execution_run_name,
+            ).delete()
 
             # Ordine canonico: tasks.insertion_order
             task_rows = (
@@ -1483,6 +1481,7 @@ class StatusManager:
                 dep = TaskDependencyORM(
                     id=uuid.uuid4().hex,
                     dag_id=dag_id,
+                    execution_id=execution_run_name,  # ✅ QUI
                     task_id=task_id,
                     upstream_task_ids=json.dumps(upstream_map.get(task_id, [])),
                     downstream_task_ids=json.dumps(downstream_map.get(task_id, [])),
