@@ -27,6 +27,7 @@ class LogEntry(BaseModel):
     task_id: str
     level: str
     message: str
+    attempt_n: Optional[int] = None
     timestamp: str
     thread_id: str
 
@@ -89,6 +90,7 @@ async def get_dag_logs(
                     task_id=log["task_id"],
                     level=log["level"],
                     message=log["message"],
+                    attempt_n=log.get("attempt_n"),
                     timestamp=log["timestamp"],
                     thread_id=log["thread_id"],
                 )
@@ -160,6 +162,7 @@ async def stream_dag_logs(
                             task_id=log["task_id"],
                             level=log["level"],
                             message=log["message"],
+                            attempt_n=log.get("attempt_n"),
                             timestamp=log["timestamp"],
                             thread_id=log["thread_id"],
                         )
@@ -227,11 +230,7 @@ async def attach_dag_logs(
 
                     # 🔥 TERMINAZIONE AUTOMATICA STREAM
                     exec_info = sm.get_latest_execution(dag_id)
-                    if exec_info and exec_info["status"] in (
-                        "completed",
-                        "failed",
-                        "cancelled",
-                    ):
+                    if exec_info and exec_info["status"] in ("completed", "failed"):
                         yield 'data: {"event": "DAG_COMPLETED"}\n\n'
                         return
 

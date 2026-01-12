@@ -35,12 +35,15 @@ class DAGCreateResponse(BaseModel):
 
 class DAGRunRequest(BaseModel):
     resume: bool = False
-    fail_fast: bool = True
+    fail_fast: Optional[bool] = None
+    trigger_type: Optional[str] = None
+    triggered_by: Optional[str] = None
 
 
 class DAGRunResponse(BaseModel):
     dag_id: str
     execution_id: str
+    run_name: Optional[str]
     status: str
     message: str
 
@@ -49,7 +52,7 @@ class DAGSubmissionRequest(BaseModel):
     dag_file_path: str
     dag_id: Optional[str] = None
     resume: bool = False
-    fail_fast: bool = True
+    fail_fast: Optional[bool] = None
 
 
 class DAGSubmissionResponse(BaseModel):
@@ -135,23 +138,39 @@ async def create_dag(
                         status_code=400,
                         detail=f"DAG ID '{dag_id}' already exists. Please choose a different DAG ID.",
                     )
-        else:
-            with orchestrator.status_manager as sm:
-                dag_id = sm.generate_unique_dag_id()
 
         # Load and validate DAG
-        dag = orchestrator.load_dag_from_file(request.dag_file_path, dag_id=dag_id)
+        dag = orchestrator.load_dag_from_file(
+            request.dag_file_path, dag_id=request.dag_id
+        )
+
+        dag_id = dag.dag_id  # fonte unica di verità
 
         # Create a new execution ID
         execution_id = str(uuid.uuid4())
 
         with orchestrator.status_manager as sm:
+
+            print("DEBUG StatusManager class:", sm.__class__)
+            print("DEBUG methods:", dir(sm))
+
             sm.save_dag_definition(dag, request.dag_file_path)
-            # Create initial execution with 'created' status
-            sm.create_dag_execution_with_status(dag_id, execution_id, "created")
+            # Create initial execution with 'queued' status
+            sm.create_dag_execution_with_status(
+                dag_id,
+                execution_id,
+                "queued",
+                fail_fast=dag.fail_fast,
+                trigger_type="api",
+                triggered_by="api",
+            )
             # Initialize all tasks with pending status
             task_ids = list(dag.tasks.keys())
-            sm.initialize_tasks_for_execution(dag_id, execution_id, task_ids)
+            sm.initialize_tasks_for_execution(
+                dag_id,
+                execution_id,
+                dag.tasks,
+            )
 
         return DAGCreateResponse(
             dag_id=dag.dag_id, message=f"DAG '{dag.dag_id}' created successfully."
@@ -164,46 +183,123 @@ async def create_dag(
 async def run_dag(
     dag_id: str,
     request: DAGRunRequest,
-    background_tasks: BackgroundTasks,
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """
     Runs a previously created DAG.
     """
+
+    logger.warning(
+        f"[DEBUG dags.py] file={__file__} line={run_dag.__code__.co_firstlineno}"
+    )
+
     try:
+        # --------------------------------------------------
+        # 1️⃣ Risoluzione trigger_type / triggered_by
+        # --------------------------------------------------
+        trigger_type = request.trigger_type or "api"
+        triggered_by = request.triggered_by or "api"
+
+        # --------------------------------------------------
+        # 2️⃣ Recupero DAG + creazione execution (se necessaria)
+        # --------------------------------------------------
         with orchestrator.status_manager as sm:
-            dag_definition = sm.get_dag_definition(dag_id)
-            if not dag_definition:
+            dag_filepath = sm.get_dag_filepath(dag_id)
+            if not dag_filepath:
                 raise HTTPException(
                     status_code=404, detail=f"DAG '{dag_id}' not found."
                 )
 
-            # Get the latest execution for this DAG
             latest_execution = sm.get_latest_execution(dag_id)
 
-            if latest_execution and latest_execution["status"] == "created":
-                # Use the existing execution ID from the created DAG
+            is_new_execution = False
+
+            if latest_execution and latest_execution["status"] == "queued":
                 execution_id = latest_execution["execution_id"]
+
+                # RIALLINEAMENTO TRIGGER CONTEXT
+                sm.update_execution_trigger_context(
+                    dag_id=dag_id,
+                    execution_id=execution_id,
+                    trigger_type=trigger_type,
+                    triggered_by=triggered_by,
+                )
+
             else:
-                # Create a new execution ID for subsequent runs
+                # Creiamo una nuova execution
                 execution_id = str(uuid.uuid4())
 
-        dag = orchestrator.dag_loader.load_dag_from_dict(dag_definition)
+                sm.create_dag_execution_with_status(
+                    dag_id=dag_id,
+                    execution_id=execution_id,
+                    status="queued",
+                    fail_fast=False,  # verrà riallineato dopo
+                    trigger_type=trigger_type,
+                    triggered_by=triggered_by,
+                )
 
-        # Run the DAG with the determined execution ID
+                is_new_execution = True
+
+            if is_new_execution:
+                execution_run_name = sm.get_execution_run_name(execution_id)
+
+                sm.save_task_dependencies_from_dag(
+                    dag,
+                    execution_id=execution_id,
+                )
+
+        # --------------------------------------------------
+        # 3️⃣ Caricamento DAG dal file
+        # --------------------------------------------------
+        dag = orchestrator.load_dag_from_file(dag_filepath, dag_id=dag_id)
+
+        with orchestrator.status_manager as sm:
+            execution_run_name = sm.get_execution_run_name(execution_id)
+
+            sm.save_task_dependencies_from_dag(
+                dag,
+                execution_id=execution_id,
+            )
+
+        # --------------------------------------------------
+        # 4️⃣ Risoluzione fail_fast
+        # --------------------------------------------------
+        yaml_or_stored_fail_fast = getattr(dag, "fail_fast", False)
+
+        if request.fail_fast is not None:
+            dag.fail_fast = request.fail_fast
+
+        logger.warning(
+            "[FAIL_FAST RESOLVE] "
+            f"dag_id={dag.dag_id} "
+            f"yaml_or_stored={yaml_or_stored_fail_fast} "
+            f"request_fail_fast={request.fail_fast} "
+            f"resolved={dag.fail_fast}"
+        )
+
+        # --------------------------------------------------
+        # 5️⃣ Avvio esecuzione reale
+        # --------------------------------------------------
         orchestrator.run_dag_in_thread(
             dag=dag,
             execution_id=execution_id,
             resume=request.resume,
-            fail_fast=request.fail_fast,
         )
+
+        # --------------------------------------------------
+        # 6️⃣ Response
+        # --------------------------------------------------
+        with orchestrator.status_manager as sm:
+            run_name = sm.get_execution_run_name(execution_id)
 
         return DAGRunResponse(
             dag_id=dag.dag_id,
             execution_id=execution_id,
+            run_name=run_name,
             status="submitted",
             message=f"DAG '{dag.dag_id}' submitted for execution.",
         )
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -249,7 +345,7 @@ async def list_dags(
     """
     Lists all DAGs, with optional filtering.
     - `active` or `running`: shows running DAGs.
-    - `terminated`: shows completed, failed, and cancelled DAGs.
+    - `terminated`: shows completed and failed DAGs.
     - specific status: shows DAGs with that status
     - `all` or no filter: shows all DAGs.
     """
@@ -260,7 +356,6 @@ async def list_dags(
             elif status == "terminated":
                 dags = sm.get_dags_by_status("completed")
                 dags.extend(sm.get_dags_by_status("failed"))
-                dags.extend(sm.get_dags_by_status("cancelled"))
             elif status and status != "all":
                 dags = sm.get_dags_by_status(status)
             else:  # all or no filter
@@ -351,16 +446,20 @@ async def resume_dag(
     """
     try:
         with orchestrator.status_manager as sm:
-            dag_definition = sm.get_dag_definition(dag_id)
-            if not dag_definition:
+            dag_filepath = sm.get_dag_filepath(dag_id)
+            if not dag_filepath:
                 raise HTTPException(
                     status_code=404, detail=f"DAG '{dag_id}' not found."
                 )
 
-        dag = orchestrator.dag_loader.load_dag_from_dict(dag_definition)
+        dag = orchestrator.load_dag_from_file(dag_filepath, dag_id=dag_id)
 
+        # su resume puoi decidere una policy:
+        # - o rispetti YAML
+        # - o forzi fail_fast=True
         new_execution_id = orchestrator.run_dag_in_thread(
-            dag=dag, resume=True, fail_fast=True  # Defaulting to fail_fast on resume
+            dag=dag,
+            resume=True,
         )
 
         return DAGResumeResponse(

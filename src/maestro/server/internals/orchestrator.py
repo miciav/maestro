@@ -35,17 +35,29 @@ class DatabaseLogHandler(logging.Handler):
     # -------------------------------
     # CONTEXT HANDLING (THREAD-SAFE)
     # -------------------------------
-    def set_context(self, dag_id: str, execution_id: str, task_id: str = None):
-        """Assigns context to the current thread only."""
+
+    def set_context(
+        self,
+        dag_id: str,
+        execution_run_name: str,
+        task_id: str | None = None,
+        attempt_number: int | None = None,
+        status: str | None = None,
+    ):
+        # Salva tutto nel thread-local context
         self._ctx.dag_id = dag_id
-        self._ctx.execution_id = execution_id
+        self._ctx.execution_id = execution_run_name
         self._ctx.task_id = task_id
+        self._ctx.attempt_number = attempt_number
+        self._ctx.status = status
 
     def clear_context(self):
-        """Clears thread context after task finishes."""
+        """Clears thread-local context after task finishes."""
         self._ctx.dag_id = None
         self._ctx.execution_id = None
         self._ctx.task_id = None
+        self._ctx.attempt_number = None
+        self._ctx.status = None
 
     # -------------------------------
     # LOG EMISSION
@@ -53,11 +65,13 @@ class DatabaseLogHandler(logging.Handler):
     def emit(self, record):
         """Store logs in the database, per-thread context."""
         dag_id = getattr(self._ctx, "dag_id", None)
-        execution_id = getattr(self._ctx, "execution_id", None)
+        execution_run_name = getattr(self._ctx, "execution_id", None)
         task_id = getattr(self._ctx, "task_id", None)
+        attempt_number = getattr(self._ctx, "attempt_number", None)
+        status = getattr(self._ctx, "status", None)
 
         # If we have no per-thread context: ignore this log
-        if not dag_id or not execution_id:
+        if not dag_id or not execution_run_name:
             return
 
         try:
@@ -73,8 +87,10 @@ class DatabaseLogHandler(logging.Handler):
             with self.status_manager as sm:
                 sm.log_message(
                     dag_id=dag_id,
-                    execution_id=execution_id,
+                    execution_run_name=execution_run_name,
                     task_id=task_id or "system",
+                    attempt_number=attempt_number,
+                    status=status,
                     level=record.levelname,
                     message=msg,
                     timestamp=timestamp,
@@ -135,7 +151,7 @@ class Orchestrator:
         # Logger dell’orchestratore (non propaga al root)
         self.logger = logging.getLogger("maestro.orchestrator")
         self.logger.setLevel(level)
-        self.logger.propagate = False
+        self.logger.propagate = True
 
         # DB handler creato ma NON agganciato al root
         self.db_handler = DatabaseLogHandler(self.status_manager)
@@ -191,6 +207,16 @@ class Orchestrator:
 
         try:
             dag = self.load_dag_from_file(dag_filepath, dag_id=dag_id)
+
+            print(
+                f"[DEBUG DAG] dag_id={dag.dag_id} fail_fast={dag.fail_fast}", flush=True
+            )
+
+            print(
+                f"[DEBUG DAG] explicit_exit_tasks={dag.get_explicit_exit_tasks()}",
+                flush=True,
+            )
+
             self.run_dag_in_thread(dag, dag_filepath=dag_filepath)
         except Exception as e:
             self.logger.error(f"Failed to execute scheduled DAG {dag_id}: {e}")
@@ -200,7 +226,6 @@ class Orchestrator:
         dag: DAG,
         execution_id: str = None,
         resume: bool = False,
-        fail_fast: bool = True,
         status_callback=None,
         dag_filepath: Optional[str] = None,  # Add this parameter
     ) -> str:
@@ -216,66 +241,73 @@ class Orchestrator:
         self._execution_stop_events[execution_id] = stop_event
 
         # Create or update execution record in database synchronously
+
         with self.status_manager as sm:
-            # Check if execution already exists (e.g., with 'created' status)
+
+            # 1️⃣ crea execution SE non esiste
             existing = sm.get_latest_execution(dag.dag_id)
-            if existing and existing["execution_id"] == execution_id:
-                # Update existing execution to 'running'
-                sm.update_dag_execution_status(dag.dag_id, execution_id, "running")
-                # Tasks should already exist for this execution, don't reinitialize
-            else:
-                # Create new execution
+
+            if not existing or existing["execution_id"] != execution_id:
                 sm.create_dag_execution(
-                    dag.dag_id, execution_id, dag_filepath=dag_filepath
+                    dag.dag_id,
+                    execution_id,
+                    dag_filepath=dag_filepath,
+                    fail_fast=dag.fail_fast,
                 )
-                # Initialize all tasks with pending status only if not resuming
+
                 if not resume:
-                    task_ids = list(dag.tasks.keys())
                     sm.initialize_tasks_for_execution(
-                        dag.dag_id, execution_id, task_ids
+                        dag.dag_id,
+                        execution_id,
+                        dag.tasks,
                     )
+
+            # 2️⃣ TRANSIZIONE OBBLIGATORIA A RUNNING
+            sm.update_dag_execution_status(
+                dag.dag_id,
+                execution_id,
+                "running",
+            )
 
         # the body of the thread
         def execute():
             try:
+
+                self.logger.warning(
+                    "[DAG DEBUG] "
+                    f"dag_id={dag.dag_id} "
+                    f"fail_fast={dag.fail_fast} "
+                    f"tasks={[t.task_id for t in dag.tasks.values()]}"
+                )
+
+                for t in dag.tasks.values():
+                    pol = getattr(t, "dependency_policy", None)
+                    self.logger.warning(
+                        f"[DAG DEBUG] task={t.task_id} "
+                        f"deps={t.dependencies} "
+                        f"policy={pol} "
+                        f"policy_type={type(pol)} "
+                        f"is_final={getattr(t, 'is_final', False)}"
+                    )
+
+                self.logger.warning(
+                    f"[FAIL_FAST RESOLVE] dag_id={dag.dag_id} execution_id={execution_id} dag.fail_fast={getattr(dag, 'fail_fast', None)}"
+                )
+
                 self.run_dag(
                     dag,
                     execution_id=execution_id,
                     resume=resume,
-                    fail_fast=fail_fast,
                     status_callback=status_callback,
                     stop_event=stop_event,
                 )
 
-                # After execution, check the final status of tasks
                 with self.status_manager as sm:
-                    final_statuses = sm.get_dag_status(dag.dag_id, execution_id)
 
-                    # Count task statuses
-                    has_failed = any(
-                        status == "failed" for status in final_statuses.values()
+                    sm.update_execution_status_from_final_task(
+                        dag.dag_id,
+                        execution_id,
                     )
-                    has_running = any(
-                        status == "running" for status in final_statuses.values()
-                    )
-
-                    # Determine overall DAG status
-                    if has_running:
-                        # Should not happen after execution completes, but handle it
-                        dag.status = DAGStatus.RUNNING
-                        sm.update_dag_execution_status(
-                            dag.dag_id, execution_id, "running"
-                        )
-                    elif has_failed:
-                        dag.status = DAGStatus.FAILED
-                        sm.update_dag_execution_status(
-                            dag.dag_id, execution_id, "failed"
-                        )
-                    else:
-                        dag.status = DAGStatus.COMPLETED
-                        sm.update_dag_execution_status(
-                            dag.dag_id, execution_id, "completed"
-                        )
 
             except Exception as e:
                 with self.status_manager as sm:
@@ -287,7 +319,7 @@ class Orchestrator:
                     sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
 
                 self.logger.error(f"DAG {dag.dag_id} execution failed: {e}")
-                if fail_fast:
+                if dag.fail_fast:
                     raise
             finally:
                 # Clean up the stop event
@@ -301,7 +333,6 @@ class Orchestrator:
         dag: DAG,
         execution_id: str = None,
         resume: bool = False,
-        fail_fast: bool = True,
         status_manager=None,
         progress_tracker=None,
         status_callback=None,
@@ -352,7 +383,6 @@ class Orchestrator:
                 dag=dag,
                 execution_id=execution_id,
                 resume=resume,
-                fail_fast=fail_fast,
                 status_callback=status_callback,
                 progress_tracker=progress_tracker,
                 stop_event=stop_event,
@@ -372,7 +402,6 @@ class Orchestrator:
         dag: DAG,
         execution_id: str,
         resume: bool,
-        fail_fast: bool,
         status_callback,
         progress_tracker,
         stop_event: Optional[threading.Event],
@@ -388,12 +417,19 @@ class Orchestrator:
 
         dag_id = dag.dag_id
 
+        self.logger.warning(
+            f"[DAG FAIL_FAST] dag_id={dag_id} execution_id={execution_id} dag.fail_fast={getattr(dag, 'fail_fast', None)}"
+        )
+
         # Initialize task tracking sets
         pending_tasks: Set[str] = set(dag.tasks.keys())
         running_tasks: Dict[str, Future] = {}
         completed_tasks: Set[str] = set()
         failed_tasks: Set[str] = set()
         skipped_tasks: Set[str] = set()
+
+        # 🆕 FAIL-FAST SOFT STOP FLAG
+        stop_scheduling = False
 
         with self.status_manager as sm:
             # Handle resume - mark already completed tasks
@@ -412,8 +448,50 @@ class Orchestrator:
                         if status_callback:
                             status_callback()
 
+            no_progress_ticks = 0
+            last_snapshot = None
+
             # Main execution loop
             while pending_tasks or running_tasks:
+
+                snapshot = (
+                    tuple(sorted(pending_tasks)),
+                    tuple(sorted(running_tasks.keys())),
+                    tuple(sorted(completed_tasks)),
+                    tuple(sorted(failed_tasks)),
+                    tuple(sorted(skipped_tasks)),
+                    stop_scheduling,
+                )
+
+                if snapshot == last_snapshot and not running_tasks and pending_tasks:
+                    no_progress_ticks += 1
+                else:
+                    no_progress_ticks = 0
+                last_snapshot = snapshot
+
+                # dopo ~3 secondi (60 * 0.05) senza progresso: deadlock
+                if no_progress_ticks >= 60:
+                    self.logger.error(
+                        f"[DEADLOCK] No progress for execution {execution_id}. "
+                        f"Pending tasks cannot be scheduled: {sorted(pending_tasks)}"
+                    )
+                    # scegli una policy: io direi "failed" per chiarezza
+                    for tid in list(pending_tasks):
+                        sm.set_task_status(dag_id, tid, "failed", execution_id)
+                        failed_tasks.add(tid)
+                        pending_tasks.remove(tid)
+                    break
+
+                self.logger.warning(
+                    "[LOOP SNAPSHOT] "
+                    f"pending={list(pending_tasks)} "
+                    f"running={list(running_tasks.keys())} "
+                    f"completed={list(completed_tasks)} "
+                    f"failed={list(failed_tasks)} "
+                    f"skipped={list(skipped_tasks)} "
+                    f"stop_scheduling={stop_scheduling}"
+                )
+
                 # Check for cancellation
                 if stop_event and stop_event.is_set():
                     self.logger.info(
@@ -439,16 +517,20 @@ class Orchestrator:
                     for task_id, future in completed_futures:
                         del running_tasks[task_id]
                         try:
-                            future.result()  # This will raise any exceptions from the task
+                            future.result()
                             completed_tasks.add(task_id)
                             self.logger.info(f"Task {task_id} completed successfully")
+
                         except Exception as e:
                             failed_tasks.add(task_id)
                             self.logger.error(f"Task {task_id} failed: {e}")
-                            if fail_fast:
-                                # Cancel all running tasks and stop
-                                self._cancel_running_tasks(running_tasks)
-                                raise Exception(f"Task {task_id} failed: {e}")
+
+                            if dag.fail_fast:
+                                stop_scheduling = True
+
+                                self.logger.warning(
+                                    f"[DAG FAIL_FAST] dag_id={dag_id} execution_id={execution_id} dag.fail_fast={getattr(dag, 'fail_fast', None)}"
+                                )
 
                 # Build upstream status dict (simple string statuses)
                 upstream_statuses = {tid: "completed" for tid in completed_tasks}
@@ -459,15 +541,51 @@ class Orchestrator:
 
                 # Loop sui task pending
                 for task_id in list(pending_tasks):
-                    task = dag.tasks[task_id]
 
-                    # Call evaluate_dependencies with StatusManager + ids so it can evaluate condition/output_of()
+                    task = dag.tasks[task_id]
+                    is_final = bool(getattr(task, "is_final", False))
+
+                    pol = getattr(task, "dependency_policy", None)
+
+                    self.logger.warning(
+                        f"[TASK EVAL] task={task_id} "
+                        f"policy={pol} "
+                        f"is_final={is_final} "
+                        f"stop_scheduling={stop_scheduling}"
+                    )
+
+                    # ================================
+                    # ### PATCH 1 — FAIL-FAST HANDLING — SOFT STOP ASSOLUTO
+                    # ================================
+
+                    if stop_scheduling and dag.fail_fast:
+                        task.status = TaskStatus.SKIPPED
+
+                        sm.set_task_status(dag_id, task_id, "skipped", execution_id)
+
+                        skipped_tasks.add(task_id)
+                        pending_tasks.remove(task_id)
+
+                        if status_callback:
+                            status_callback()
+
+                        self.logger.warning(
+                            f"[FAIL-FAST] Skipping task {task_id} (soft stop)"
+                        )
+                        continue
+
+                    # ================================
+                    # ### PATCH 2 — NORMALE VALUTAZIONE
+                    # ================================
                     action = evaluate_dependencies(
                         task, upstream_statuses, sm, dag_id, execution_id
                     )
 
+                    self.logger.warning(
+                        f"[TASK DECISION] task={task_id} action={action}"
+                    )
+
                     if action == "run":
-                        # Submit task for execution
                         self.logger.info(f"Submitting task {task_id} for execution")
                         future = self.task_executor.submit(
                             self._execute_task_async,
@@ -482,18 +600,19 @@ class Orchestrator:
                         pending_tasks.remove(task_id)
 
                     elif action == "wait":
-                        # leave in pending; continue to next task
                         continue
 
                     elif action == "skip":
-                        # mark skipped in memory and persist
                         task.status = TaskStatus.SKIPPED
+
                         sm.set_task_status(dag_id, task_id, "skipped", execution_id)
+
                         skipped_tasks.add(task_id)
-                        if task_id in pending_tasks:
-                            pending_tasks.remove(task_id)
+                        pending_tasks.remove(task_id)
+
                         if status_callback:
                             status_callback()
+
                         self.logger.info(f"Task {task_id} skipped (policy/condition)")
 
                 # Evita busy-waiting: aspetta un breve intervallo se ci sono task attivi
@@ -544,7 +663,14 @@ class Orchestrator:
                     # Condition False → SKIPPED qui
                     task.status = TaskStatus.SKIPPED
                     skipped_tasks.add(task_id)
-                    sm.set_task_status(dag_id, task_id, "skipped", execution_id)
+
+                    sm.set_task_status(
+                        dag_id,
+                        task_id,
+                        "skipped",
+                        execution_id,
+                    )
+
                     to_skip.append(task_id)
                     self.logger.info(
                         f"Skipping task {task_id} due to condition: {condition}"
@@ -613,13 +739,7 @@ class Orchestrator:
 
         task_id = task.task_id
 
-        print(
-            f"[DEBUG] task={task_id}, hasattr(retries)={hasattr(task, 'retries')}, "
-            f"raw_retries={getattr(task, 'retries', None)!r}, dict={task.__dict__}",
-            flush=True,
-        )
-
-        # Leggiamo i parametri di retry dal task, con fallback robusto
+        # --- Retry config ---
         raw_retries = getattr(task, "retries", 0)
         raw_retry_delay = getattr(task, "retry_delay", 0)
 
@@ -633,7 +753,6 @@ class Orchestrator:
         except (TypeError, ValueError):
             retry_delay = 0
 
-        # Log di debug per capire cosa vede l’orchestratore
         self.logger.info(
             f"Task {task_id}: configured retries={max_retries}, retry_delay={retry_delay}"
         )
@@ -642,9 +761,25 @@ class Orchestrator:
 
         while True:
             attempt += 1
+            attempt_id = None
+
+            # --- create attempt (best-effort) ---
+            try:
+                with self.status_manager as sm:
+                    attempt_id = sm.create_task_attempt(
+                        dag_id=dag_id,
+                        task_id=task_id,
+                        execution_id=execution_id,
+                        attempt_number=attempt,
+                    )
+            except Exception as ex:
+                self.logger.warning(
+                    f"[task_attempts] create_task_attempt failed for {task_id}: {ex}"
+                )
+                attempt_id = None
 
             try:
-                # Stato: running
+                # Stato task: running
                 task.status = TaskStatus.RUNNING
                 with self.status_manager as sm:
                     sm.set_task_status(dag_id, task_id, "running", execution_id)
@@ -652,15 +787,21 @@ class Orchestrator:
                 if status_callback:
                     status_callback()
 
-                # Context per logging DB per questo thread/task
                 if db_handler:
-                    db_handler.set_context(dag_id, execution_id, task_id)
+                    try:
+                        db_handler.set_context(
+                            dag_id=dag_id,
+                            execution_run_name=execution_id,  # (anche se è ancora UUID, intanto non deve crashare)
+                            task_id=task_id,
+                            attempt_number=attempt,
+                            status="running",
+                        )
+                    except Exception as ex:
+                        self.logger.warning(f"[db_handler] set_context failed: {ex}")
 
-                # Passa info alla task (utile per PythonTask / BashTask)
                 task.dag_id = dag_id
                 task.execution_id = execution_id
 
-                # Log del tentativo
                 self.logger.info(
                     f"Executing task: {task_id} (attempt {attempt}/{max_retries + 1})"
                 )
@@ -668,44 +809,89 @@ class Orchestrator:
                 executor_instance = self.executor_factory.get_executor(task.executor)
                 task.execute(executor_instance)
 
-                # Se arrivo qui: successo
+                # --- SUCCESS ---
                 task.status = TaskStatus.COMPLETED
+
+                # ✅ SEMPRE aggiornare lo stato task (non dipende dagli attempt)
                 with self.status_manager as sm:
                     sm.set_task_status(dag_id, task_id, "completed", execution_id)
+
+                # 🔍 aggiornare l'attempt è best-effort
+                if attempt_id:
+                    try:
+                        with self.status_manager as sm:
+                            sm.complete_task_attempt(
+                                attempt_id=attempt_id,
+                                status="completed",
+                            )
+                    except Exception as ex:
+                        self.logger.warning(
+                            f"[task_attempts] complete_task_attempt failed for {task_id}: {ex}"
+                        )
 
                 if progress_tracker:
                     progress_tracker.increment_completed()
                 if status_callback:
                     status_callback()
 
-                return  # task completata con successo → si esce
+                return
 
             except BaseException as e:
-                # IGNORA SOLO I SEGNALI CHE DEVONO DAVVERO FERMARE TUTTO
                 if isinstance(e, KeyboardInterrupt):
                     raise
 
                 self.logger.error(f"Task {task_id} failed on attempt {attempt}: {e}")
 
                 task.status = TaskStatus.FAILED
+
+                # ✅ SEMPRE aggiornare lo stato task
                 with self.status_manager as sm:
                     sm.set_task_status(dag_id, task_id, "failed", execution_id)
 
+                # 🔍 attempt failed (best-effort)
+                if attempt_id:
+                    try:
+                        with self.status_manager as sm:
+                            sm.fail_task_attempt(attempt_id, error=str(e))
+                    except Exception as ex:
+                        self.logger.warning(
+                            f"[task_attempts] fail_task_attempt failed for {task_id}: {ex}"
+                        )
+
                 if attempt <= max_retries:
+                    # retry_count solo se davvero retryiamo
+                    with self.status_manager as sm:
+                        sm.increment_retry_count(dag_id, task_id, execution_id)
+
                     self.logger.info(
                         f"Retrying task {task_id} in {retry_delay} seconds "
-                        f"({attempt}/{max_retries})"
+                        f"(retry {attempt}/{max_retries})"
                     )
+
                     if retry_delay > 0:
                         time.sleep(retry_delay)
+
                     continue
-                else:
-                    if status_callback:
-                        status_callback()
-                    raise Exception(f"Task {task_id} failed: {e}") from e
+
+                if status_callback:
+                    status_callback()
+
+                raise Exception(f"Task {task_id} failed: {e}") from e
 
             finally:
-                # Pulizia del contesto di logging
+                # 🔒 force-close SOLO se l'attempt NON è stato chiuso esplicitamente
+                if attempt_id and task.status == TaskStatus.RUNNING:
+                    try:
+                        with self.status_manager as sm:
+                            sm.force_close_attempt_if_running(
+                                attempt_id=attempt_id,
+                                error="aborted",
+                            )
+                    except Exception as ex:
+                        self.logger.warning(
+                            f"[task_attempts] force_close_attempt_if_running failed for {task_id}: {ex}"
+                        )
+
                 if db_handler:
                     db_handler.clear_context()
 
@@ -723,13 +909,19 @@ class Orchestrator:
         self._cancel_running_tasks(running_tasks)
 
         # Mark DAG as cancelled
-        sm.update_dag_execution_status(dag.dag_id, execution_id, "cancelled")
+        sm.update_dag_execution_status(dag.dag_id, execution_id, "failed")
 
         # Mark pending tasks as skipped
         for task_id in pending_tasks:
             task = dag.tasks[task_id]
             task.status = TaskStatus.SKIPPED
-            sm.set_task_status(dag.dag_id, task_id, "skipped", execution_id)
+
+            sm.set_task_status(
+                dag.dag_id,
+                task_id,
+                "skipped",
+                execution_id,
+            )
 
         if status_callback:
             status_callback()
@@ -774,6 +966,22 @@ class Orchestrator:
             TaskStatus.SKIPPED: "magenta",
         }
         return color_map.get(status, "white")
+
+    def _coerce_bool(self, v: Any) -> bool:
+        """Coerce common YAML/JSON representations to bool safely."""
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return False
+        if isinstance(v, (int, float)):
+            return v != 0
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ("true", "yes", "y", "1", "on"):
+                return True
+            if s in ("false", "no", "n", "0", "off", ""):
+                return False
+        return bool(v)
 
     def get_dag_status(self, dag: DAG) -> Dict[str, Any]:
         """Get comprehensive DAG status."""
@@ -863,63 +1071,86 @@ def evaluate_dependencies(
         "wait" -> task deve attendere
         "skip" -> task deve essere skippata
     """
-    policy = getattr(task, "dependency_policy", "none")
-    dependencies = getattr(task, "dependencies", [])
-    condition = getattr(task, "condition", None)
+
+    policy = getattr(task, "dependency_policy", "any")
+    if hasattr(policy, "value"):
+        policy = policy.value
+    policy = str(policy).lower()
+    dependencies = getattr(task, "dependencies", []) or []
+
+    # NORMALIZZAZIONE CRITICA DELLA CONDITION
+    raw_condition = getattr(task, "condition", None)
+    condition = raw_condition if raw_condition not in ("", False) else None
 
     # ---------------------------------------------------------
-    # 1) Nessuna dipendenza e nessuna condition → RUN
+    # 1) Nessuna dipendenza → valuta solo la condition
     # ---------------------------------------------------------
-    if not dependencies and not condition:
-        return "run"
+    if not dependencies:
+        if condition is None:
+            return "run"
+
+        try:
+            cond_value = eval(
+                condition,
+                {},
+                {
+                    "output_of": lambda tid: sm.get_task_output(
+                        dag_id, tid, execution_id
+                    )
+                },
+            )
+            return "run" if cond_value else "skip"
+        except Exception:
+            # condition non valutabile → NON bloccare la DAG
+            return "run"
 
     # ---------------------------------------------------------
     # 2) Gestione dipendenze (regole UNIVERSALI)
     # ---------------------------------------------------------
-    if dependencies:
-        statuses = [upstream_statuses.get(dep) for dep in dependencies]
+    statuses = [upstream_statuses.get(dep) for dep in dependencies]
 
-        # Stato non ancora noto
-        if any(s is None for s in statuses):
-            return "wait"
+    # Stato non ancora noto
+    if any(s is None for s in statuses):
+        return "wait"
 
-        # Dipendenze non ancora terminali
-        if any(s in ("pending", "running") for s in statuses):
-            return "wait"
+    # Dipendenze non ancora terminali
+    if any(s in ("pending", "running") for s in statuses):
+        return "wait"
 
-        # ---- policy ALL ----
-        if policy == "all":
-            if not all(s == "completed" for s in statuses):
-                return "skip"
-
-        # ---- policy ANY ----
-        elif policy == "any":
-            if not any(s == "completed" for s in statuses):
-                return "skip"
-
-        # ---- policy NONE ----
-        elif policy == "none":
-            # tutte terminali → non importa lo stato
-            pass
-
-    # ---------------------------------------------------------
-    # 3) Gestione condition
-    # ---------------------------------------------------------
-    if condition:
-        try:
-
-            def output_of(tid):
-                return sm.get_task_output(dag_id, tid, execution_id)
-
-            env = {"output_of": output_of}
-            if not eval(condition, {}, env):
-                return "skip"
-
-        except Exception as e:
-            print(
-                f"[evaluate_dependencies] Error evaluating condition for {task.task_id}: {e}"
-            )
+    # ---- policy ALL ----
+    if policy == "all":
+        if not all(s == "completed" for s in statuses):
             return "skip"
+
+    # ---- policy ANY ----
+    elif policy == "any":
+        if not any(s == "completed" for s in statuses):
+            return "skip"
+
+    # ---- policy NONE ----
+    elif policy == "none":
+        pass  # tutte terminali → ok
+
+    # ---------------------------------------------------------
+    # 3) Gestione condition (POST-dipendenze)
+    # ---------------------------------------------------------
+    if condition is not None:
+
+        def output_of(tid):
+            try:
+                return sm.get_task_output(dag_id, tid, execution_id)
+            except Exception:
+                return None
+
+        try:
+            cond_value = eval(condition, {}, {"output_of": output_of})
+            if not cond_value:
+                return "skip"
+        except Exception:
+            # condition non valutabile:
+            # - policy none → NON blocca
+            # - altre policy → skip
+            return "run" if policy == "none" else "skip"
 
     # ---------------------------------------------------------
     # 4) Tutto OK → RUN

@@ -1,10 +1,14 @@
+import hashlib
 import json
 import random
 import re
 import string
 import threading
+import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+import yaml
 
 """Internal status manager used by the server.
 
@@ -14,10 +18,21 @@ the server to record runtime status and expose queries for monitoring and
 control operations.
 """
 
+import json
+import uuid
+
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 
-from .models import Base, DagORM, ExecutionORM, LogORM, TaskORM
+from .models import (
+    Base,
+    DagORM,
+    ExecutionORM,
+    LogORM,
+    TaskAttemptORM,
+    TaskDependencyORM,
+    TaskORM,
+)
 
 # Generatore di nomi in stile Docker - liste compatte di aggettivi e sostantivi
 DOCKER_ADJECTIVES = """
@@ -126,6 +141,16 @@ class StatusManager:
             Base.metadata.create_all(self.engine)
 
     # ----------------------------------------------------------------------
+    # Helper: normalize fail_fast
+    def _normalize_fail_fast(self, value: Any) -> str:
+        if isinstance(value, str):
+            return "ON" if value.strip().upper() == "ON" else "OFF"
+        return "ON" if bool(value) else "OFF"
+
+    def _generate_run_name(self) -> str:
+        return f"{random.choice(DOCKER_ADJECTIVES)}_{random.choice(DOCKER_NOUNS)}"
+
+    # ----------------------------------------------------------------------
     # Metodi del context manager
 
     # ----------------------------------------------------------------------
@@ -147,39 +172,49 @@ class StatusManager:
 
     # ----------------------------------------------------------------------
     # Gestione stato task
-
     # ----------------------------------------------------------------------
-    # Metodo: set_task_status
-    def set_task_status(
-        self, dag_id: str, task_id: str, status: str, execution_id: str = None
-    ):
-        """Create or update a task record and set its status.
 
-        If the task does not exist it is created. When a task becomes
-        `running` the `started_at` timestamp is set; when it reaches a
-        terminal state (`completed`, `failed`, `cancelled`, `skipped`)
-        the `completed_at` timestamp is set.
+    def set_task_status(
+        self,
+        dag_id: str,
+        task_id: str,
+        status: str,
+        execution_id: str,
+        is_final: Optional[bool] = None,
+    ):
+        """
+        Update status of an existing task identified by (execution_id, task_id).
+        DOES NOT create tasks anymore (tasks must be initialized explicitly).
         """
         with self.Session.begin() as session:
             task = (
                 session.query(TaskORM)
-                .filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id)
+                .filter_by(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                )
                 .first()
             )
+
             if not task:
-                task = TaskORM(dag_id=dag_id, id=task_id, execution_id=execution_id)
-                session.add(task)
+                # Stato incoerente: il task doveva esistere
+                return
 
             task.status = status
             task.thread_id = str(threading.current_thread().ident)
 
-            if status == "running":
+            if is_final is not None:
+                task.is_final = 1 if is_final else 0
+
+            if status == "running" and task.started_at is None:
                 task.started_at = datetime.now()
-            elif status in ["completed", "failed", "cancelled", "skipped"]:
+
+            if status in ("completed", "failed", "skipped"):
                 task.completed_at = datetime.now()
 
     # ----------------------------------------------------------------------
-    # Metodo: set_task_output
+
     def set_task_output(
         self,
         dag_id: str,
@@ -187,69 +222,45 @@ class StatusManager:
         execution_id: str,
         output: Any,
     ) -> None:
-        """
-        Salva l'output di un task nella colonna `output` della tabella tasks.
-
-        NOTA IMPORTANTE:
-        - NON crea nuove righe nella tabella tasks.
-        - Aggiorna SOLO il record esistente identificato da
-          (dag_id, task_id, execution_id).
-        """
-        # serializza in JSON se è dict/list, altrimenti stringa semplice
         if isinstance(output, (dict, list)):
             encoded = json.dumps(output)
+            output_type = "json"
         else:
             encoded = str(output)
+            output_type = "text"
 
         with self.Session.begin() as session:
             task = (
                 session.query(TaskORM)
-                .filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id)
+                .filter_by(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                )
                 .first()
             )
 
             if not task:
-                # Non creiamo una nuova riga qui: se non troviamo il task,
-                # c'è qualcosa di incoerente a monte.
-                # Volendo, potresti loggare un warning.
                 return
 
             task.output = encoded
+            task.output_type = output_type
 
     # ----------------------------------------------------------------------
-    # Metodo: get_task_status
+
     def get_task_status(
-        self, dag_id: str, task_id: str, execution_id: str = None
+        self, dag_id: str, task_id: str, execution_id: str
     ) -> Optional[str]:
-        """Return the status for a specific task.
-
-        Looks up the task by `dag_id` and `task_id`. If an `execution_id`
-        is provided the lookup is scoped to that execution; if the record
-        is missing for the given execution the method falls back to the
-        globally-scoped task (execution_id=None) to preserve resume flows.
-
-        Returns the status string, or `None` if the task is not found.
-        """
         with self.Session() as session:
             task = (
                 session.query(TaskORM)
-                .filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id)
+                .filter_by(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                )
                 .first()
             )
-
-            if not task and execution_id is not None:
-                # Ripiega sullo stato del task senza scoping per esecuzione
-                # quando manca un record specifico per l'esecuzione. Questo
-                # replica il comportamento delle implementazioni precedenti
-                # basate su file e mantiene funzionanti i flussi di resume
-                # quando i task sono stati persistiti prima della creazione
-                # del record di esecuzione.
-                task = (
-                    session.query(TaskORM)
-                    .filter_by(dag_id=dag_id, id=task_id, execution_id=None)
-                    .first()
-                )
-
             return task.status if task else None
 
     # ----------------------------------------------------------------------
@@ -259,7 +270,7 @@ class StatusManager:
         with self.Session() as session:
             task = (
                 session.query(TaskORM)
-                .filter_by(dag_id=dag_id, id=task_id, execution_id=execution_id)
+                .filter_by(dag_id=dag_id, task_id=task_id, execution_id=execution_id)
                 .first()
             )
 
@@ -285,7 +296,7 @@ class StatusManager:
                 .filter_by(dag_id=dag_id, execution_id=execution_id)
                 .all()
             )
-            return {task.id: task.status for task in tasks}
+            return {task.task_id: task.status for task in tasks}
 
     # ----------------------------------------------------------------------
     # Method: reset_dag_status
@@ -308,82 +319,127 @@ class StatusManager:
 
     # ----------------------------------------------------------------------
     # Deliver status information about DAG
-
     # ----------------------------------------------------------------------
-    # Method: create_dag_execution
-    def create_dag_execution(
-        self, dag_id: str, execution_id: str, dag_filepath: Optional[str] = None
-    ) -> str:
-        """Create a new Execution record for `dag_id` and mark it running.
 
-        The method records start time, thread id and pid. If the DAG record
-        does not exist it is created. Returns the `execution_id`.
-        """
+    def create_dag_execution(
+        self,
+        dag_id: str,
+        execution_id: str,
+        dag_filepath: Optional[str] = None,
+        fail_fast: Any = False,
+        run_name: Optional[str] = None,
+        trigger_type: Optional[str] = None,
+        triggered_by: Optional[str] = None,
+    ) -> str:
         with self.Session.begin() as session:
+            execution = session.query(ExecutionORM).filter_by(id=execution_id).first()
+
+            if execution:
+                return execution_id  # 🔒 già esistente → no-op
+
             execution = ExecutionORM(
                 id=execution_id,
                 dag_id=dag_id,
-                status="running",
-                started_at=datetime.now(),
+                run_name=run_name or self._generate_run_name(),
+                status="queued",
+                fail_fast=self._normalize_fail_fast(fail_fast),
+                trigger_type=trigger_type,
+                triggered_by=triggered_by,
                 thread_id=str(threading.current_thread().ident),
                 pid=threading.current_thread().ident,
             )
             session.add(execution)
+
             dag = session.query(DagORM).filter_by(id=dag_id).first()
             if not dag:
-                dag = DagORM(id=dag_id, dag_filepath=dag_filepath)
-                session.add(dag)
-            elif dag_filepath:
-                dag.dag_filepath = dag_filepath
+                raise RuntimeError(
+                    f"DAG '{dag_id}' does not exist. "
+                    "DAG must be created before creating executions."
+                )
+
             return execution_id
 
     # ----------------------------------------------------------------------
-    # Method: create_dag_execution_with_status
-    def create_dag_execution_with_status(
-        self, dag_id: str, execution_id: str, status: str
-    ) -> str:
-        """Create a new Execution record with an explicit status.
 
-        This variant allows creating executions in non-running states
-        (for example `created` or `failed`). If `status` is not `created`
-        the `started_at`/`thread_id` are set as well.
-        """
+    def create_dag_execution_with_status(
+        self,
+        dag_id: str,
+        execution_id: str,
+        status: str,
+        fail_fast: Any = False,
+        run_name: Optional[str] = None,
+        trigger_type: Optional[str] = None,
+        triggered_by: Optional[str] = None,
+    ) -> str:
         with self.Session.begin() as session:
+            execution = session.query(ExecutionORM).filter_by(id=execution_id).first()
+
+            if execution:
+                # 🔄 aggiorniamo solo lo status
+                execution.status = status
+                if status in ("queued", "running") and execution.started_at is None:
+                    execution.started_at = datetime.now()
+                    execution.thread_id = str(threading.current_thread().ident)
+                return execution_id
+
             execution = ExecutionORM(
                 id=execution_id,
                 dag_id=dag_id,
                 status=status,
+                run_name=run_name or self._generate_run_name(),
+                fail_fast=self._normalize_fail_fast(fail_fast),
+                trigger_type=trigger_type,
+                triggered_by=triggered_by,
                 pid=threading.current_thread().ident,
             )
-            if status != "created":
+
+            if status in ("queued", "running"):
                 execution.started_at = datetime.now()
                 execution.thread_id = str(threading.current_thread().ident)
+
             session.add(execution)
             return execution_id
 
     # ----------------------------------------------------------------------
-    # Method: initialize_tasks_for_execution
-    def initialize_tasks_for_execution(
-        self, dag_id: str, execution_id: str, task_ids: List[str]
-    ):
-        """Insert initial TaskORM rows for a new execution.
 
-        Each task is created with status `pending` and an `insertion_order`
-        so callers can rely on a deterministic ordering when needed.
+    def initialize_tasks_for_execution(
+        self,
+        dag_id: str,
+        execution_id: str,
+        tasks_or_task_ids: Union[Dict[str, Any], List[str]],
+    ):
         """
+        Insert TaskORM rows for a new execution.
+        Tasks are created ONCE here, with UUID PK.
+        """
+
         with self.Session.begin() as session:
-            for i, task_id in enumerate(task_ids):
+
+            if hasattr(tasks_or_task_ids, "items"):
+                iterable = tasks_or_task_ids.items()
+            else:
+                iterable = ((task_id, None) for task_id in tasks_or_task_ids)
+
+            for i, (task_id, task_obj) in enumerate(iterable):
+                max_retries = 0
+                if task_obj is not None:
+                    max_retries = int(getattr(task_obj, "retries", 0) or 0)
+
                 task = TaskORM(
-                    id=task_id,
+                    id=uuid.uuid4().hex,
+                    task_id=task_id,
                     dag_id=dag_id,
                     execution_id=execution_id,
                     status="pending",
                     insertion_order=i,
+                    is_final=bool(getattr(task_obj, "is_final", False)),
+                    retry_count=0,
+                    max_retries=max_retries,
                 )
                 session.add(task)
 
     # ----------------------------------------------------------------------
-    # Method: update_dag_execution_status
+
     def update_dag_execution_status(self, dag_id: str, execution_id: str, status: str):
         """Update the status of an existing execution record.
 
@@ -395,12 +451,11 @@ class StatusManager:
         with self.Session.begin() as session:
             execution = (
                 session.query(ExecutionORM)
-                .filter_by(dag_id=dag_id, id=execution_id)
+                .filter(ExecutionORM.id == execution_id)
                 .first()
             )
             if execution:
-                # If the DAG transitions from "created" to "running" and
-                # `started_at` is not set yet, set it now.
+                # If the DAG transitions to "running" and `started_at` is not set yet, set it now.
                 if status == "running" and execution.started_at is None:
                     execution.started_at = datetime.now()
                     execution.thread_id = str(threading.current_thread().ident)
@@ -408,11 +463,11 @@ class StatusManager:
 
                 execution.status = status
 
-                if status in ["completed", "failed", "cancelled"]:
+                if status in ["completed", "failed"]:
                     execution.completed_at = datetime.now()
 
     # ----------------------------------------------------------------------
-    # Method: mark_incomplete_tasks_as_failed
+
     def mark_incomplete_tasks_as_failed(self, dag_id: str, execution_id: str):
         """Mark all running/pending tasks for an execution as `failed`.
 
@@ -431,7 +486,7 @@ class StatusManager:
             )
 
     # ----------------------------------------------------------------------
-    # Method: get_running_dags
+
     def get_running_dags(self) -> List[Dict[str, Any]]:
         """Return a list of currently running executions with metadata.
 
@@ -452,7 +507,7 @@ class StatusManager:
             ]
 
     # ----------------------------------------------------------------------
-    # Method: get_dags_by_status
+
     def get_dags_by_status(self, status: str) -> List[Dict[str, Any]]:
         """Return executions filtered by `status` with relevant metadata."""
         with self.Session() as session:
@@ -472,7 +527,7 @@ class StatusManager:
             ]
 
     # ----------------------------------------------------------------------
-    # Method: get_all_dags
+
     def get_all_dags(self) -> List[Dict[str, Any]]:
         """Return a list of all known DAGs and their latest execution.
 
@@ -496,7 +551,7 @@ class StatusManager:
                             latest_execution.id if latest_execution else None
                         ),
                         "status": (
-                            latest_execution.status if latest_execution else "created"
+                            latest_execution.status if latest_execution else "queued"
                         ),
                         "started_at": (
                             latest_execution.started_at.isoformat()
@@ -517,7 +572,7 @@ class StatusManager:
             return result
 
     # ----------------------------------------------------------------------
-    # Method: get_dag_summary
+
     def get_dag_summary(self) -> Dict[str, Any]:
         """Return aggregated counts for executions and DAGs.
 
@@ -603,17 +658,17 @@ class StatusManager:
                 query = query.filter_by(id=execution_id)
             execution = query.first()
             if execution:
-                # Mark the execution as cancelled
-                execution.status = "cancelled"
+                # Mark the execution as failed (schema does not include "cancelled")
+                execution.status = "failed"
                 execution.completed_at = datetime.now()
 
-                # Mark all incomplete tasks (running, pending) as cancelled
+                # Mark all incomplete tasks (running, pending) as skipped
                 session.query(TaskORM).filter(
                     TaskORM.dag_id == dag_id,
                     TaskORM.execution_id == execution.id,
                     TaskORM.status.in_(["running", "pending"]),
                 ).update(
-                    {TaskORM.status: "cancelled", TaskORM.completed_at: datetime.now()},
+                    {TaskORM.status: "skipped", TaskORM.completed_at: datetime.now()},
                     synchronize_session=False,
                 )
 
@@ -663,7 +718,7 @@ class StatusManager:
                 "pid": execution.pid,
                 "tasks": [
                     {
-                        "task_id": task.id,
+                        "task_id": task.task_id,
                         "status": task.status,
                         "started_at": (
                             task.started_at.isoformat() if task.started_at else None
@@ -678,74 +733,173 @@ class StatusManager:
             }
 
     # ----------------------------------------------------------------------
-    # Method: log_message
+
     def log_message(
         self,
         dag_id: str,
-        execution_id: str,
-        task_id: str,
+        execution_run_name: str,
+        task_id: Optional[str],
+        attempt_number: Optional[int],
+        status: Optional[str],
         level: str,
         message: str,
         timestamp: Optional[datetime] = None,
     ):
-        """Store a log message with an optional externally provided timestamp."""
         with self.Session.begin() as session:
             log = LogORM(
+                id=uuid.uuid4().hex,
                 dag_id=dag_id,
-                execution_id=execution_id,
-                task_id=task_id,
+                execution_id=execution_run_name,  # <-- qui dentro salviamo run_name
+                task_id=task_id,  # <-- task_id string
+                attempt_n=attempt_number,  # <-- attempt_number
+                status=status,  # <-- status dell'attempt
                 level=level,
                 message=message,
                 timestamp=timestamp or datetime.now(),
                 thread_id=str(threading.current_thread().ident),
+                pid=threading.current_thread().ident,
             )
             session.add(log)
 
     # ----------------------------------------------------------------------
-    # Method: add_log
+
     def add_log(
         self,
         dag_id: str,
-        execution_id: str,
-        task_id: str,
         message: str,
         level: str = "INFO",
         timestamp: Optional[datetime] = None,
+        # --- NEW preferred ---
+        execution_run_name: Optional[str] = None,
+        attempt_number: Optional[int] = None,
+        status: Optional[str] = None,
+        task_id: Optional[str] = None,
+        # --- LEGACY (compat) ---
+        execution_id: Optional[str] = None,
     ):
-        """Helper wrapper for log_message() with timestamp support."""
+        """
+        Backward-compatible log helper.
+
+        Preferred: pass execution_run_name.
+        Legacy: pass execution_id and we resolve run_name from DB.
+        """
+
+        # Resolve run_name if caller passed execution_id (legacy)
+        if not execution_run_name and execution_id:
+            resolved = self.get_execution_run_name(execution_id)
+            # fallback ultra-safe: if not found, keep execution_id so logs are not lost
+            execution_run_name = resolved or execution_id
+
+        # Ensure execution_id is available (reverse resolve)
+        if execution_id is None and execution_run_name:
+            execution_id = self.get_execution_id_from_run_name(execution_run_name)
+
+        # If still missing, make it explicit but don't crash
+        execution_run_name = execution_run_name or "unknown_run"
+
+        # AUTO-FILL attempt_number e status da task_attempts
+
+        if task_id and execution_id and (attempt_number is None or status is None):
+            session = self.Session()
+
+            attempt = (
+                session.query(TaskAttemptORM)
+                .filter(
+                    TaskAttemptORM.execution_id == execution_id,
+                    TaskAttemptORM.task_pk == task_id,
+                )
+                .order_by(TaskAttemptORM.attempt_number.desc())
+                .first()
+            )
+
+            if attempt:
+                if attempt_number is None:
+                    attempt_number = attempt.attempt_number
+
+                if status is None:
+                    status = attempt.status
+
+            session.close()
+
+        # AUTO-FILL attempt_number e status da task_attempts
+        # (serve risolvere task_pk dalla tabella tasks)
+        if task_id and execution_id and (attempt_number is None or status is None):
+            with self.Session.begin() as session:
+                # 1) trova la riga task (serve per ricavare task_pk = tasks.id)
+                task_row = (
+                    session.query(TaskORM)
+                    .filter_by(
+                        dag_id=dag_id,
+                        task_id=task_id,  # <-- stringa ("start", "final", ...)
+                        execution_id=execution_id,  # <-- id vero di executions.id
+                    )
+                    .first()
+                )
+
+                if task_row:
+                    # 2) trova l'ultimo attempt per quella task_pk
+                    attempt = (
+                        session.query(TaskAttemptORM)
+                        .filter(
+                            TaskAttemptORM.execution_id == execution_id,
+                            TaskAttemptORM.task_pk
+                            == task_row.id,  # <-- QUESTA è la chiave giusta
+                        )
+                        .order_by(TaskAttemptORM.attempt_number.desc())
+                        .first()
+                    )
+
+                    if attempt:
+                        if attempt_number is None:
+                            attempt_number = attempt.attempt_number
+                        if status is None:
+                            status = attempt.status
+
         self.log_message(
             dag_id=dag_id,
-            execution_id=execution_id,
+            execution_run_name=execution_run_name,
             task_id=task_id,
+            attempt_number=attempt_number,
+            status=status,
             level=level,
             message=message,
             timestamp=timestamp,
         )
 
     # ----------------------------------------------------------------------
-    # Method: get_execution_logs
+
     def get_execution_logs(
         self, dag_id: str, execution_id: str = None, limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """Return the most recent logs for a DAG/execution up to `limit`.
-
-        Logs are returned ordered by timestamp descending.
-        """
         with self.Session() as session:
             query = session.query(LogORM).filter_by(dag_id=dag_id)
             if execution_id:
-                query = query.filter_by(execution_id=execution_id)
+                execution = (
+                    session.query(ExecutionORM).filter_by(id=execution_id).first()
+                )
+                run_name = execution.run_name if execution else None
+                if run_name and run_name != execution_id:
+                    query = query.filter(
+                        LogORM.execution_id.in_([execution_id, run_name])
+                    )
+                else:
+                    query = query.filter_by(execution_id=execution_id)
+
             logs = query.order_by(LogORM.timestamp.desc()).limit(limit).all()
-            return [
-                {
-                    "task_id": log.task_id,
-                    "level": log.level,
-                    "message": log.message,
-                    "timestamp": log.timestamp.isoformat(),
-                    "thread_id": log.thread_id,
-                }
-                for log in logs
-            ]
+
+            result = []
+            for log in logs:
+                result.append(
+                    {
+                        "task_id": log.task_id,
+                        "level": log.level,
+                        "message": log.message,
+                        "attempt_n": log.attempt_n,
+                        "timestamp": log.timestamp.isoformat(),
+                        "thread_id": log.thread_id,
+                    }
+                )
+            return result
 
     # ----------------------------------------------------------------------
     # Method: validate_dag_id
@@ -784,7 +938,7 @@ class StatusManager:
         return f"{base_name}_{suffix}"
 
     # ----------------------------------------------------------------------
-    # Method: get_latest_execution
+
     def get_latest_execution(self, dag_id: str) -> Optional[Dict[str, Any]]:
         """Return a summary dict for the latest execution of `dag_id`.
 
@@ -817,43 +971,87 @@ class StatusManager:
             return None
 
     # ----------------------------------------------------------------------
-    # Method: save_dag_definition
-    def save_dag_definition(self, dag, dag_filepath: Optional[str] = None):
-        """Persist the DAG definition JSON into the `DagORM.definition` field.
 
-        If the DagORM does not exist a new record is created. `dag` is
-        expected to expose a `dag_id` attribute and `to_dict()` method.
-        """
-        with self.Session.begin() as session:
-            dag_orm = session.query(DagORM).filter_by(id=dag.dag_id).first()
-            if not dag_orm:
-                dag_orm = DagORM(id=dag.dag_id)
-                session.add(dag_orm)
-            dag_orm.definition = json.dumps(dag.to_dict())
-            if dag_filepath:
-                dag_orm.dag_filepath = dag_filepath
+    def get_execution_run_name(self, execution_id: str) -> Optional[str]:
+        """Return run_name for a given execution id."""
+        if not execution_id:
+            return None
+        with self.Session() as session:
+            e = session.query(ExecutionORM).filter_by(id=execution_id).first()
+            return e.run_name if e else None
 
     # ----------------------------------------------------------------------
-    # Method: get_dag_definition
-    def get_dag_definition(self, dag_id: str) -> Optional[Dict]:
-        """Return the stored DAG definition as a Python object.
 
-        If the stored value is valid JSON it is decoded; otherwise the raw
-        stored value is returned (for backward compatibility).
+    def save_dag_definition(self, dag, dag_filepath: Optional[str] = None):
         """
+        Persist DAG metadata.
+        - created_at: set once, on first sight
+        - updated_at: set ONLY if definition_hash changes
+        """
+
+        # 1️⃣ Calcolo hash stabile del file YAML
+        definition_hash = None
+        if dag_filepath:
+            with open(dag_filepath, "r") as f:
+                raw = f.read()
+            definition_hash = hashlib.sha256(raw.encode()).hexdigest()
+
+        now = datetime.now()
+
+        with self.Session.begin() as session:
+            dag_orm = session.query(DagORM).filter_by(id=dag.dag_id).first()
+
+            # --------------------------------------------------
+            # Caso: DAG mai vista prima
+            # --------------------------------------------------
+            if not dag_orm:
+                dag_orm = DagORM(
+                    id=dag.dag_id,
+                    definition_hash=definition_hash or "",
+                    dag_filepath=dag_filepath,
+                    created_at=now,
+                    updated_at=now,
+                    is_active=1,
+                )
+                session.add(dag_orm)
+                return
+
+            # --------------------------------------------------
+            # Caso: DAG già esistente
+            # --------------------------------------------------
+
+            else:
+                changed = False
+
+                if definition_hash and definition_hash != dag_orm.definition_hash:
+                    dag_orm.definition_hash = definition_hash
+                    changed = True
+
+                if dag_filepath and dag_filepath != dag_orm.dag_filepath:
+                    dag_orm.dag_filepath = dag_filepath
+
+                if changed:
+                    dag_orm.updated_at = now
+
+    # ----------------------------------------------------------------------
+
+    def get_dag_definition(self, dag_id: str) -> Optional[Dict]:
         with self.Session() as session:
             dag = session.query(DagORM).filter_by(id=dag_id).first()
-            if not dag:
-                return None
-
-            if dag.definition is None:
+            if not dag or not dag.dag_filepath:
                 return None
 
             try:
-                return json.loads(dag.definition)
-            except (TypeError, json.JSONDecodeError):
-                # If the stored definition is not valid JSON, fall back to returning the raw value
-                return dag.definition
+                with open(dag.dag_filepath, "r") as f:
+                    return yaml.safe_load(f)
+            except Exception:
+                return None
+
+    def get_dag_filepath(self, dag_id: str) -> Optional[str]:
+        """Return the stored DAG YAML path for a DAG id."""
+        with self.Session() as session:
+            dag = session.query(DagORM).filter_by(id=dag_id).first()
+            return dag.dag_filepath if dag else None
 
     # ----------------------------------------------------------------------
     # Method: delete_dag
@@ -880,3 +1078,421 @@ class StatusManager:
         if cls._instance is None:
             raise RuntimeError("StatusManager has not been initialized yet.")
         return cls._instance
+
+    def has_any_failed_task(self, dag_id: str, execution_id: str) -> bool:
+        tasks = self.get_tasks_for_execution(dag_id, execution_id)
+        return any(t["status"] == "failed" for t in tasks)
+
+    def update_execution_status_from_final_task(
+        self,
+        dag_id: str,
+        execution_id: str,
+    ) -> Optional[str]:
+
+        # 1️⃣ risolvi final task + exit-task
+        self.resolve_final_tasks(dag_id, execution_id)
+        exit_task = self.find_exit_task(dag_id, execution_id)
+
+        if not exit_task:
+            return None
+
+        # 2️⃣ mappa status task → status execution
+        if exit_task.status == "completed":
+            new_status = "completed"
+        elif exit_task.status == "failed":
+            new_status = "failed"
+        elif exit_task.status == "skipped":
+            # caso all-skipped
+            new_status = "failed"
+        else:
+            # fallback ultra-difensivo (non dovrebbe mai succedere)
+            new_status = "failed"
+
+        # 3️⃣ persistenza
+        with self.Session.begin() as session:
+            execution = (
+                session.query(ExecutionORM)
+                .filter_by(dag_id=dag_id, id=execution_id)
+                .first()
+            )
+            if not execution:
+                return None
+
+            failed_count = (
+                session.query(TaskORM)
+                .filter_by(dag_id=dag_id, execution_id=execution_id, status="failed")
+                .count()
+            )
+            skipped_count = (
+                session.query(TaskORM)
+                .filter_by(dag_id=dag_id, execution_id=execution_id, status="skipped")
+                .count()
+            )
+
+            execution.status = new_status
+            execution.failed_tasks = failed_count
+            execution.skipped_tasks = skipped_count
+            execution.completed_at = datetime.now()
+            return new_status
+
+    def is_fail_fast_enabled(self, dag_id: str) -> bool:
+        definition = self.get_dag_definition(dag_id)
+        if not definition:
+            return False
+        dag_def = definition.get("dag", definition)
+        return bool(dag_def.get("fail_fast", False))
+
+    def resolve_final_tasks(self, dag_id: str, execution_id: str) -> None:
+        """
+        Determina e normalizza tasks.is_final secondo le regole definitive.
+        """
+
+        with self.Session.begin() as session:
+            tasks = (
+                session.query(TaskORM)
+                .filter_by(dag_id=dag_id, execution_id=execution_id)
+                .all()
+            )
+
+            if not tasks:
+                return
+
+            task_by_id = {t.task_id: t for t in tasks}
+
+            dag_def = self.get_dag_definition(dag_id)
+            dag_def = dag_def.get("dag", dag_def) if dag_def else {}
+            dag_tasks = dag_def.get("tasks", {}) if dag_def else {}
+            if isinstance(dag_tasks, list):
+                dag_tasks = {
+                    t.get("task_id"): t for t in dag_tasks if isinstance(t, dict)
+                }
+
+            # -------------------------------------------------
+            # 1️⃣ Individua finali STRUTTURALI
+            # -------------------------------------------------
+
+            # a) finali esplicite nel DAG
+            explicit_final_ids = {
+                tid for tid, t in dag_tasks.items() if bool(t.get("is_final", False))
+            }
+
+            if explicit_final_ids:
+                structural_final_ids = explicit_final_ids
+            else:
+                # b) sink nodes (non dipendenze di nessuno)
+                all_deps = set()
+                for t in dag_tasks.values():
+                    for dep in t.get("dependencies", []) or []:
+                        all_deps.add(dep)
+
+                structural_final_ids = {
+                    tid for tid in dag_tasks.keys() if tid not in all_deps
+                }
+
+            structural_finals = [
+                task_by_id[tid] for tid in structural_final_ids if tid in task_by_id
+            ]
+
+            # -------------------------------------------------
+            # Helper: risalita dipendenze
+            # -------------------------------------------------
+            def find_upstream_with_started_at(task, visited=None):
+                if visited is None:
+                    visited = set()
+                if task.id in visited:
+                    return None
+                visited.add(task.id)
+
+                deps = dag_tasks.get(task.task_id, {}).get("dependencies", [])
+
+                candidates = []
+                for dep_id in deps:
+                    upstream = task_by_id.get(dep_id)
+                    if not upstream:
+                        continue
+                    if upstream.started_at:
+                        candidates.append(upstream)
+                    else:
+                        c = find_upstream_with_started_at(upstream, visited)
+                        if c:
+                            candidates.append(c)
+
+                return (
+                    max(candidates, key=lambda t: t.started_at) if candidates else None
+                )
+
+            # -------------------------------------------------
+            # 2️⃣ Normalizzazione DB
+            # -------------------------------------------------
+            for t in tasks:
+                t.is_final = False
+
+            # -------------------------------------------------
+            # 3️⃣ Validazione temporale
+            # -------------------------------------------------
+            final_candidates = []
+
+            for task in structural_finals:
+                if task.started_at:
+                    final_candidates.append(task)
+                else:
+                    upstream = find_upstream_with_started_at(task)
+                    if upstream:
+                        final_candidates.append(upstream)
+
+            # -------------------------------------------------
+            # 4️⃣ Fallback estremo
+            # -------------------------------------------------
+            if not final_candidates:
+                fallback = max(tasks, key=lambda t: t.insertion_order)
+                fallback.is_final = True
+                return
+
+            # -------------------------------------------------
+            # 5️⃣ Scrittura finale
+            # -------------------------------------------------
+            for t in final_candidates:
+                t.is_final = True
+
+    def find_exit_task(self, dag_id: str, execution_id: str) -> Optional[TaskORM]:
+        """
+        Ritorna la exit-task per l'execution.
+        Assume che resolve_final_tasks() sia già stata chiamata.
+        """
+
+        with self.Session() as session:
+            final_tasks = (
+                session.query(TaskORM)
+                .filter(
+                    TaskORM.dag_id == dag_id,
+                    TaskORM.execution_id == execution_id,
+                    TaskORM.is_final.is_(True),
+                )
+                .all()
+            )
+
+            if not final_tasks:
+                return None
+
+            with_started = [t for t in final_tasks if t.started_at]
+            if with_started:
+                return max(with_started, key=lambda t: t.started_at)
+
+            return max(final_tasks, key=lambda t: t.insertion_order)
+
+    def update_execution_trigger_context(
+        self,
+        dag_id: str,
+        execution_id: str,
+        trigger_type: str,
+        triggered_by: str,
+    ) -> None:
+        with self.Session.begin() as session:
+            execution = (
+                session.query(ExecutionORM)
+                .filter_by(id=execution_id, dag_id=dag_id)
+                .first()
+            )
+            if not execution:
+                return
+
+            execution.trigger_type = trigger_type
+            execution.triggered_by = triggered_by
+
+    def increment_retry_count(
+        self,
+        dag_id: str,
+        task_id: str,
+        execution_id: str,
+    ) -> None:
+        with self.Session.begin() as session:
+            task = (
+                session.query(TaskORM)
+                .filter_by(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                )
+                .first()
+            )
+            if not task:
+                return
+
+            task.retry_count += 1
+
+    def create_task_attempt(
+        self,
+        dag_id: str,
+        task_id: str,
+        execution_id: str,
+        attempt_number: int,
+    ) -> str:
+        with self.Session.begin() as session:
+            task = (
+                session.query(TaskORM)
+                .filter_by(
+                    dag_id=dag_id,
+                    task_id=task_id,
+                    execution_id=execution_id,
+                )
+                .first()
+            )
+
+            if not task:
+                return None
+
+            attempt = TaskAttemptORM(
+                id=uuid.uuid4().hex,
+                task_pk=task.id,
+                execution_id=execution_id,
+                attempt_number=attempt_number,
+                status="running",
+                started_at=datetime.now(),
+                pid=threading.current_thread().ident,
+                thread_id=str(threading.current_thread().ident),
+            )
+
+            session.add(attempt)
+            return attempt.id
+
+    def complete_task_attempt(
+        self, attempt_id: str, status: str, error: Optional[str] = None
+    ):
+        if not attempt_id:
+            return
+
+        # ci servono per il log finale, ma li prendiamo senza nested transaction
+        dag_id = None
+        execution_id = None
+        task_id = None
+
+        with self.Session.begin() as session:
+            attempt = session.get(TaskAttemptORM, attempt_id)
+            if not attempt:
+                return
+
+            # aggiorna attempt
+            attempt.status = status
+            attempt.completed_at = datetime.now()
+            attempt.error = error
+
+            # prepara info per log finale (senza scriverlo qui!)
+            task = session.get(TaskORM, attempt.task_pk)
+            if task:
+                dag_id = task.dag_id
+                execution_id = attempt.execution_id
+                task_id = task.task_id
+
+        # ✅ FUORI dalla transazione: niente lock annidati
+        if dag_id and execution_id and task_id:
+            level = "INFO" if status == "completed" else "ERROR"
+            self.add_log(
+                dag_id=dag_id,
+                execution_id=execution_id,
+                task_id=task_id,
+                message=f"[Task] finished with status {status}",
+                level=level,
+            )
+
+    def fail_task_attempt(self, attempt_id: str, error: str):
+        self.complete_task_attempt(
+            attempt_id=attempt_id,
+            status="failed",
+            error=error,
+        )
+
+    def force_close_attempt_if_running(self, attempt_id: str, error: str = "aborted"):
+        if not attempt_id:
+            return
+
+        with self.Session.begin() as session:
+            attempt = session.get(TaskAttemptORM, attempt_id)
+            if not attempt:
+                return
+
+            # 🔒 NO-OP se già chiuso
+            if attempt.completed_at is not None:
+                return
+
+            if attempt.status != "running":
+                return
+
+            # 🔥 chiusura forzata SOLO se ancora running
+            attempt.status = "failed"
+            attempt.completed_at = datetime.now()
+            attempt.error = error
+
+    def save_task_dependencies_from_dag(self, dag, execution_id: str) -> None:
+        """
+        Persist structural task dependencies for a DAG execution.
+        One row per task (node-centric DAG representation).
+        """
+
+        print(">>> save_task_dependencies_from_dag CALLED")
+        print(">>> dag =", dag)
+        print(">>> dag.tasks =", getattr(dag, "tasks", None))
+        print(f">>> execution_id = {execution_id}")
+
+        dag_id = dag.dag_id
+
+        # -------------------------------------------------
+        # 1️⃣ Costruzione mappe DAL DAG IN MEMORIA
+        # -------------------------------------------------
+
+        upstream_map: dict[str, list[str]] = {}
+        downstream_map: dict[str, list[str]] = {}
+        task_meta: dict[str, dict] = {}
+
+        for task_id, task in dag.tasks.items():
+            deps = list(getattr(task, "dependencies", []) or [])
+
+            upstream_map[task_id] = deps
+            downstream_map.setdefault(task_id, [])
+
+            task_meta[task_id] = {
+                "condition": getattr(task, "condition", None),
+                "dependency_policy": getattr(task, "dependency_policy", "all"),
+            }
+
+            for upstream in deps:
+                downstream_map.setdefault(upstream, []).append(task_id)
+
+        # -------------------------------------------------
+        # 2️⃣ Persistenza DB (idempotente per execution)
+        # -------------------------------------------------
+
+        with self.Session.begin() as session:
+            session.query(TaskDependencyORM).filter_by(
+                dag_id=dag_id,
+                execution_id=execution_id,
+            ).delete()
+
+            # Ordine canonico: tasks.insertion_order
+
+            task_rows = (
+                session.query(TaskORM.task_id)
+                .filter(
+                    TaskORM.dag_id == dag_id,
+                    TaskORM.execution_id
+                    == execution_id,  # 🔥 QUESTA ERA LA PARTE MANCANTE
+                )
+                .order_by(TaskORM.insertion_order)
+                .all()
+            )
+
+            all_task_ids = [row.task_id for row in task_rows]
+
+            for task_id in all_task_ids:
+                dep = TaskDependencyORM(
+                    id=uuid.uuid4().hex,
+                    dag_id=dag_id,
+                    execution_id=execution_id,
+                    task_id=task_id,
+                    upstream_task_ids=json.dumps(upstream_map.get(task_id, [])),
+                    downstream_task_ids=json.dumps(downstream_map.get(task_id, [])),
+                    condition=task_meta.get(task_id, {}).get("condition"),
+                    dependency_policy=task_meta.get(task_id, {}).get(
+                        "dependency_policy", "all"
+                    ),
+                )
+                session.add(dep)

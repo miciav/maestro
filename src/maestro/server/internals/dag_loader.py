@@ -27,11 +27,23 @@ class DAGLoader:
     def load_dag_from_file(self, filepath: str, dag_id: Optional[str] = None) -> DAG:
         """Load and validate DAG from YAML file."""
         filepath = str(Path(filepath).resolve())
-        dag_id = dag_id or Path(filepath).stem
+        dag_id = dag_id
 
         try:
+
             with open(filepath, "r") as f:
                 raw_config = yaml.safe_load(f)
+
+            config = DAGConfig(**raw_config)
+
+            # 🔥 FIX: DAG ID viene dal contenuto del file, non dal filename
+            yaml_dag = config.dag
+            yaml_dag_name = yaml_dag.get("name")
+
+            if not yaml_dag_name:
+                raise ValueError("DAG configuration must contain 'dag.name'")
+
+            dag_id = dag_id or yaml_dag_name
 
             # Validate config structure
             config = DAGConfig(**raw_config)
@@ -58,7 +70,20 @@ class DAGLoader:
         if "cron_schedule" in config.dag:
             cron_schedule = config.dag["cron_schedule"]
 
-        dag = DAG(dag_id=dag_id, start_time=start_time, cron_schedule=cron_schedule)
+        # Extract fail_fast execution policy (default: False)
+        fail_fast = False
+        if "fail_fast" in config.dag:
+            if not isinstance(config.dag["fail_fast"], bool):
+                raise ValueError("fail_fast must be a boolean (true/false)")
+            fail_fast = config.dag["fail_fast"]
+
+        dag = DAG(
+            dag_id=dag_id,
+            start_time=start_time,
+            cron_schedule=cron_schedule,
+            fail_fast=fail_fast,
+        )
+
         dag_config = config.dag
 
         # Validate required fields
@@ -73,6 +98,9 @@ class DAGLoader:
                 raise ValueError(
                     f"Error creating task '{task_config.get('task_id', 'unknown')}': {e}"
                 )
+
+        # 🔒 Resolve is_final deterministically now that tasks are loaded
+        self._resolve_final_tasks(dag)
 
         try:
             dag.validate()
@@ -142,13 +170,26 @@ class DAGLoader:
         )
 
     def load_dag_from_dict(self, dag_dict: Dict[str, Any]) -> DAG:
-        """Load a DAG from a dictionary representation."""
         dag_id = dag_dict.get("dag_id", "default_dag")
         start_time_str = dag_dict.get("start_time")
         start_time = self._parse_datetime(start_time_str) if start_time_str else None
         cron_schedule = dag_dict.get("cron_schedule")
 
-        dag = DAG(dag_id=dag_id, start_time=start_time, cron_schedule=cron_schedule)
+        fail_fast = dag_dict.get("fail_fast", False)
+        if not isinstance(fail_fast, bool):
+            raise ValueError("fail_fast must be a boolean")
+
+        dag = DAG(
+            dag_id=dag_id,
+            start_time=start_time,
+            cron_schedule=cron_schedule,
+            fail_fast=fail_fast,
+        )
+
+        print(
+            f"[DAG LOADER] load_dag_from_dict dag_id={dag.dag_id} "
+            f"fail_fast={dag.fail_fast}"
+        )
 
         # Get tasks from the dictionary
         tasks = dag_dict.get("tasks", {})
@@ -185,5 +226,38 @@ class DAGLoader:
                 task = self._create_task_from_config(task_config, None)
                 dag.add_task(task)
 
+        # 🔒 Resolve is_final deterministically now that tasks are loaded
+        self._resolve_final_tasks(dag)
+
         dag.validate()
         return dag
+
+    def _resolve_final_tasks(self, dag):
+        """
+        Ensure that at least one task is marked as is_final=True.
+
+        If no task explicitly declares is_final=True,
+        automatically mark all sink tasks (tasks that are not
+        dependencies of any other task) as final.
+        """
+
+        tasks = dag.tasks
+
+        # 1) Check for explicit is_final=True
+        any_explicit_final = any(
+            bool(getattr(task, "is_final", False)) for task in tasks.values()
+        )
+
+        if any_explicit_final:
+            return  # nothing to do
+
+        # 2) Collect all dependency names
+        all_dependencies = set()
+        for task in tasks.values():
+            for dep in getattr(task, "dependencies", []) or []:
+                all_dependencies.add(dep)
+
+        # 3) Mark sink tasks as final
+        for task_id, task in tasks.items():
+            if task_id not in all_dependencies:
+                task.is_final = True

@@ -35,7 +35,7 @@ class DAGSubmissionRequest(BaseModel):
     dag_file_path: str
     dag_id: Optional[str] = None
     resume: bool = False
-    fail_fast: bool = True
+    fail_fast: Optional[bool] = None
 
 
 class DAGSubmissionResponse(BaseModel):
@@ -65,6 +65,7 @@ class LogEntry(BaseModel):
     task_id: str
     level: str
     message: str
+    attempt_n: Optional[int] = None
     timestamp: str
     thread_id: str
 
@@ -342,6 +343,7 @@ async def get_dag_logs(
                     task_id=log["task_id"],
                     level=log["level"],
                     message=log["message"],
+                    attempt_n=log.get("attempt_n"),
                     timestamp=log["timestamp"],
                     thread_id=log["thread_id"],
                 )
@@ -407,6 +409,7 @@ async def stream_dag_logs(
                             task_id=log["task_id"],
                             level=log["level"],
                             message=log["message"],
+                            attempt_n=log.get("attempt_n"),
                             timestamp=log["timestamp"],
                             thread_id=log["thread_id"],
                         )
